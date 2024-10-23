@@ -1,0 +1,31 @@
+{
+    "name": "Tonnel Network V4",
+    "version": "0.0.1",
+    "scripts": {
+        "start": "blueprint run",
+        "build": "blueprint build",
+        "test": "jest --verbose"
+    },
+    "devDependencies": {
+        "@ton/blueprint": "^0.24.0",
+        "@ton/core": "~0",
+        "@ton/crypto": "^3.3.0",
+        "@ton/sandbox": "^0.22.0",
+        "@ton/test-utils": "^0.4.2",
+        "@ton/ton": "^15.0.0",
+        "@types/jest": "^29.5.13",
+        "@types/node": "^22.5.5",
+        "jest": "^29.7.0",
+        "prettier": "^3.3.3",
+        "snarkjs": "^0.7.4",
+        "ts-jest": "^29.2.5",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.6.2",
+        "fixed-merkle-tree": "^0.7.3",
+        "circomlib": "^0.5.2"
+    },
+    "dependencies": {
+        "eth-sig-util": "^3.0.1",
+        "ethers": "^5.0.26"
+    }
+}

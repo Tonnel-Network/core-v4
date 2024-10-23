@@ -1,0 +1,903 @@
+#include "imports/stdlib.fc";
+#include "imports/merkleTree.fc";
+#include "imports/jetton-utils.fc";
+#include "imports/consts.fc";
+#include "imports/hash-contract-utils.fc";
+
+
+const int const::min_storage = 500000000; ;;0.5 TON
+;; load_data populates storage variables using stored data
+(cell, cell, cell, slice, int, int) load_data() impure {
+    var ds = get_data().begin_parse();
+    cell merkle = ds~load_ref();
+    cell fee_info = ds~load_ref();
+    cell hash_contract_code = ds~load_ref();
+    cell stucks = ds~load_dict();
+
+    slice fee_info_slice = fee_info.begin_parse();
+    ;; fee info data: 10 + 267 + 267 + 128
+    int fee_per_thousand = fee_info_slice~load_uint(10);
+    slice fee_recepient = fee_info_slice~load_msg_addr();
+    int balance = fee_info_slice~load_coins();
+
+    return (merkle, hash_contract_code, stucks, fee_recepient, fee_per_thousand, balance);
+}
+
+;; save_data stores storage variables as a cell into persistent storage
+() save_data(cell merkle, cell hash_contract_code, cell stucks, slice fee_recepient, int fee_per_thousand, int balance) impure {
+    set_data(
+        begin_cell()
+            .store_ref(merkle)
+            .store_ref(
+            begin_cell().store_uint(fee_per_thousand, 10).store_slice(fee_recepient).store_coins(balance).end_cell())
+            .store_ref(hash_contract_code)
+            .store_dict(stucks)
+            .end_cell()
+    );
+}
+
+
+() send_message_tonnel_tree(slice recepient, builder payload) impure inline {
+    var msg = begin_cell()
+        .store_uint(0x18, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+        .store_slice(recepient)
+        .store_coins(const::tx_fee_send_tree)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .store_builder(payload);
+
+    send_raw_message(msg.end_cell(), 2); ;; paying fees, don't revert on errors
+}
+
+() send_ton(slice recepient, int amount, int mode) impure inline {
+
+    var msg = begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(recepient)
+        .store_grams(amount)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .end_cell();
+    send_raw_message(msg, mode);
+
+}
+
+() deploy_hash_contract(int commitment, slice sender_address, cell nested_msg, cell hash_contract_code) impure inline {
+    cell hash_contract_state_init = calculate_hash_contract_state_init(commitment, my_address(), hash_contract_code);
+    cell msg = begin_cell()
+        .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+        .store_slice(calculate_hash_contract_address(hash_contract_state_init))
+        .store_coins(0)
+        .store_uint(6, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .store_ref(hash_contract_state_init)
+        .store_uint(op::create_hash, 32) ;; only check hash, change it after
+        .store_slice(sender_address)
+        .store_ref(nested_msg)
+        .end_cell();
+    send_raw_message(msg, 64);
+}
+
+() destroy_hash_contract(slice contract_address, slice relayer_address, int coins, int mode) impure inline {
+    cell msg = begin_cell()
+        .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+        .store_slice(contract_address)
+        .store_coins(coins)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .store_uint(op::destroy, 32) ;; only check hash, change it after 
+        .store_slice(relayer_address)
+        .end_cell();
+    send_raw_message(msg, mode);
+}
+
+() emit_log_simple(int event_id, slice data) impure inline {
+    var msg = begin_cell()
+        .store_uint(12, 4) ;; ext_out_msg_info$11 src:MsgAddressInt ()
+        .store_uint(1, 2)
+        .store_uint(256, 9)
+        .store_uint(event_id, 256)
+        .store_uint(0, 64 + 32 + 2) ;; created_lt, created_at, init:Maybe, body:Either
+        .store_slice(data)
+        .end_cell();
+    send_raw_message(msg, 0);
+}
+
+(int) check_proof_for_insert2(int old_root, int new_root, int commitment1, int commitment2, int pathIndices, int deposit_amount, slice insert_proof) impure inline {
+    slice IC0 = "a0590d1d4b7e17f4ebb612b236fb611f1f61f4ca9255f7fce32f2b45f9f34e951ecc855fa108fc6459b770ed6bf47b06"s;
+    slice IC1 = "942b4663cfeee6e285b08588f8a3bc05d014f1128d1e94de24976d46bdbfa72d840ea8b76a4bf697fa952ccf60115006"s;
+    slice IC2 = "a33c7718136330dd08a26671449de7c97bbcd49716e876c64f986f8f6ff33a70393a33ecfe05c8b6a6b9a8f77fe023de"s;
+    slice IC3 = "a07e2cd2753e63996df3c7a1c14a80a23aaae894f800321d4276950db6d421042e927dba117c2e04b4ac21565f38228e"s;
+    slice IC4 = "99df6b2c3d418dc770821a3b308673a8248903d60b974600f7b8d3a97ee1e19716751ef597b55007c9410d4246a3fa53"s;
+    slice IC5 = "a19de982446dabceda663b95aa9de41f1f3079af57d2669e35fd6d308b5010c136d507fcbb3df917bf9525917e4272f8"s;
+    slice IC6 = "88b51be04fde8d27f6b687fae49bec9d4075ff8603f68b7e372cdd8632677aee6ae4db9801d55c65adf6824d6a12ffbd"s;
+
+    slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+    slice delta2 = "b259eaefa4fad6b1cd925c6cf7c0aa82559ea28e871198e60628e596264f9b2fa82badbcd37d610cfac59de53d7ad1d807335af6836cf13286e91c237f929cd7fa3d8a50973917bf9ed9dff90273b9aeda93489e56a5dc621902a0ce12a2b82d"s;
+    slice alf1 = "ac7d702040f8605838e8a33df1d873128a5a8af3874e0a32e08fc56b35c143c94b73d5284de0efee6494e2f70fe8ac40"s;
+    slice beta2 = "ad621c5feb3a525f0a20a834fea9eb8b2009bcd77075f1c8fa8a7da0c4e2b4adeb388840c1eb739a4f3f4956f7de6f2e145d4681628e7a756eb9338645ddda256f061baa5a5aef1d15e7a309d4b968bb7d636fe2b108c91de4d24bd1aadc2c84"s;
+
+    cell A_cell = insert_proof~load_ref();
+    cell B_cell = insert_proof~load_ref();
+    cell C_cell = insert_proof~load_ref();
+    slice A = A_cell.begin_parse();
+    slice B = B_cell.begin_parse();
+    slice C = C_cell.begin_parse();
+    slice vk_x = IC0;
+
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, old_root));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC2, new_root));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC3, commitment1));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC4, commitment2));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC5, pathIndices));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC6, deposit_amount));
+
+    slice neg_a = bls_g1_negate(A);
+
+    return bls_pairing_check(neg_a,
+        B,
+        alf1,
+        beta2,
+        vk_x,
+        gamma2,
+        C,
+        delta2,
+        4);
+
+}
+
+
+(int) check_proof_for_deposit(int commitment, int deposit_amount, slice deposit_proof) impure inline {
+
+
+    slice IC0 = "b9c6ad838d38f3c3d0d303f49548341e3f798a427c840d5d4e54be59d506738b6e6e978657f8ead6e13c76d417d56686"s;
+    slice IC1 = "81d39df7f3ac107f3f5fd10b63d006a4a287ee07ae6db498bbaeff2a43c13444cc64d608c89f9091c7c88831e42f4046"s;
+    slice IC2 = "b078718aaf087ce8148fbe7eba02b444a123a9bd2ef91cde03fb6d21e3e59785e8d6a8dac0b7cd448a89a65a1a63589a"s;
+
+    slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+    slice delta2 = "a474b84df09e6fc03710633925f6602591380ea87fa54cef50565aa685f14b52c56fbcbe0ad3a6cc50ed2eecd4ffdf2810290b29439a7b102717bb6819785280a043d1d56fe1c643e0b5293b2a9def6ec2a0684e9e26a7772d41dbe6577b72ff"s;
+    slice alf1 = "86eb9de1fae7b540e09c26303cee8b99784835d37bf46f3fb1db25b7b063d9ab9aa866e79f7cc4eb209224c8465b9bde"s;
+    slice beta2 = "9091cd3cdc8abaa367a61d5e094dc91ceec4a831f9c995e0b6d38cff4a9cf897a6bb7cc6d1fbb54068bbd8bb479e56d5010417ac1b215ac661897a156c587791a9cc20dffd3d60009696a749136c6b874f8f7a6c2e951843ef410ee953d0354c"s;
+
+    cell A_cell = deposit_proof~load_ref();
+    cell B_cell = deposit_proof~load_ref();
+    cell C_cell = deposit_proof~load_ref();
+    slice A = A_cell.begin_parse();
+    slice B = B_cell.begin_parse();
+    slice C = C_cell.begin_parse();
+    slice vk_x = IC0;
+
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, deposit_amount));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC2, commitment));
+
+    slice neg_a = bls_g1_negate(A);
+
+    return bls_pairing_check(neg_a,
+        B,
+        alf1,
+        beta2,
+        vk_x,
+        gamma2,
+        C,
+        delta2,
+        4);
+
+}
+
+;; without commitment checker
+(int) check_proof_for_insert_batch(int args_hash, slice insert_proof) impure inline {
+
+    slice IC0 = "b0407b84ade6b665275f8946106470cc25279ad6889702425a7c19062a700a59fb0e94b0429c6dc03ac9623fd3a995f7"s;
+    slice IC1 = "a1b9f8056ca92e3630ae740ed1240010f5a52da05f0942caaa0a110df01b251c28fd8ca5dbf3b0d15488a339270b4ff4"s;
+
+    slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+    slice delta2 = "ab4d5d458e7c8849a768bb810bb2a14a948350901fa9841b00cc14eb3e87523217687ea78e21cc755cc52a509a13e5b61991aea46c2b043fa535f7660cdf96359d30a8c3455be54583d90fc1fc0965deed43d14877c48cca7ba39397629a7fb8"s;
+    slice alf1 = "826cf84dd933bd28bc29705c82f6412ccddaa69aa92d992dc712decc25ab164310e554cc657b893db300d09b2804185d"s;
+    slice beta2 = "a642b88ab44f7750c9cf5fd0887a52db38674d134a51209568a96453c0ac5b402ba25ad3f3f61299476c1aea02a71966187f0f246b9b7e7206766557439302e920b353743f25c1f2ae96c026323f4a9fee5880e772076f47ca3eb9ccfc2ec01f"s;
+
+    cell A_cell = insert_proof~load_ref();
+    cell B_cell = insert_proof~load_ref();
+    cell C_cell = insert_proof~load_ref();
+    slice A = A_cell.begin_parse();
+    slice B = B_cell.begin_parse();
+    slice C = C_cell.begin_parse();
+    slice vk_x = IC0;
+
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, args_hash));
+
+    slice neg_a = bls_g1_negate(A);
+
+    return bls_pairing_check(neg_a,
+        B,
+        alf1,
+        beta2,
+        vk_x,
+        gamma2,
+        C,
+        delta2,
+        4);
+
+}
+
+
+;; without commitment checker
+(int) check_proof_for_insert_batch16(int args_hash, slice insert_proof) impure inline {
+
+    slice IC0 = "b87e51e066aba745b0b4021f828002251c3dac2f95fbf878c43e5a2566e9f081f1b8bd73a0fb598c1e890501b7144484"s;
+    slice IC1 = "8ef0ae84de8cf3bf8810e55994f3397b96886bcd68c43f2e0a1c7d131842631fc5ae4dafc2c903cf89fbe3aaa9fd6bce"s;
+
+    slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+    slice delta2 = "84030560ff0eca165fb3ef13e642a5829c183caf468629beaa86ef21802051f15f49c2f7ab322f6fffe272f8865b459f0950f366b8499501991a20e8b0c928d5c7309ed1fe23a8a5c40101ab9e7a5e8bcaeffae5faa9d4fbda86c07f89a121a5"s;
+    slice alf1 = "826cf84dd933bd28bc29705c82f6412ccddaa69aa92d992dc712decc25ab164310e554cc657b893db300d09b2804185d"s;
+    slice beta2 = "a642b88ab44f7750c9cf5fd0887a52db38674d134a51209568a96453c0ac5b402ba25ad3f3f61299476c1aea02a71966187f0f246b9b7e7206766557439302e920b353743f25c1f2ae96c026323f4a9fee5880e772076f47ca3eb9ccfc2ec01f"s;
+
+    cell A_cell = insert_proof~load_ref();
+    cell B_cell = insert_proof~load_ref();
+    cell C_cell = insert_proof~load_ref();
+    slice A = A_cell.begin_parse();
+    slice B = B_cell.begin_parse();
+    slice C = C_cell.begin_parse();
+    slice vk_x = IC0;
+
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, args_hash));
+
+    slice neg_a = bls_g1_negate(A);
+
+    return bls_pairing_check(neg_a,
+        B,
+        alf1,
+        beta2,
+        vk_x,
+        gamma2,
+        C,
+        delta2,
+        4);
+
+}
+
+(int) check_proof_for_insert_batch8(int args_hash, slice insert_proof) impure inline {
+
+
+
+    slice IC0 = "86a5db0a57aad46768847cda2dd9b62fcc96530cb27785083ee4b81a6ae93adda6b0135b77fff0f57cad606c852401e8"s;
+    slice IC1 = "86b8a4740bfee710d2484e49890c07b25aa0690a80a0f1a72112f4ddc0441ea4ab6b1828a71afda197404cf8602a4ac5"s;
+
+    slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+    slice delta2 = "8f9eb1daa7b4a4b0ed50272e3e27f764b7068fc211b1cf967652004572ac808d4563205db02cc7f5d696e0ee0548860916df252b31572b7deefdba6fcf60bb77204222356315c91f78d8c95a4848465fa61d74c5d78abd35a8484296b10bc573"s;
+    slice alf1 = "826cf84dd933bd28bc29705c82f6412ccddaa69aa92d992dc712decc25ab164310e554cc657b893db300d09b2804185d"s;
+    slice beta2 = "a642b88ab44f7750c9cf5fd0887a52db38674d134a51209568a96453c0ac5b402ba25ad3f3f61299476c1aea02a71966187f0f246b9b7e7206766557439302e920b353743f25c1f2ae96c026323f4a9fee5880e772076f47ca3eb9ccfc2ec01f"s;
+
+    cell A_cell = insert_proof~load_ref();
+    cell B_cell = insert_proof~load_ref();
+    cell C_cell = insert_proof~load_ref();
+    slice A = A_cell.begin_parse();
+    slice B = B_cell.begin_parse();
+    slice C = C_cell.begin_parse();
+    slice vk_x = IC0;
+
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, args_hash));
+
+    slice neg_a = bls_g1_negate(A);
+
+    return bls_pairing_check(neg_a,
+        B,
+        alf1,
+        beta2,
+        vk_x,
+        gamma2,
+        C,
+        delta2,
+        4);
+
+}
+
+(int) check_proof_for_transact(int root, int public_amount, int ext_data_hash, int inputNullifier_0, int inputNullifier_1, int outputCommitment_0, int outputCommitment_1, slice proof_cell) impure inline {
+    
+    slice IC0 = "9945677067d04e9580ea171a1fd90c603a05ffcb035fc281d7e531d54a5f2cc7776a16aa3b1ecc1790c1b19b49c1d039"s;
+    slice IC1 = "804226712177962af9d3a336f758a1de219927cf0dfec60aeaee1b4f3ac7c8dbed056879794a157f02c4acfe4bece459"s;
+    slice IC2 = "85ee04f90e74da989a9f08c7108f880c9905ac4a2e8db816215eb5bcf7a628e468f8b2e1ddd58fbfe6c9eeb51d5e512d"s;
+    slice IC3 = "818cf7dd0b851a3c9d3e651ea72b1440e5e1192f00028048b2d2991447dc2c7790cdff914dbeea0fb7d4e32a6ddd0e48"s;
+    slice IC4 = "b0347a19fc3f0f1a460ad45470fbe24701df893fec3902a9e677e96027972833a8fe591b745c8d02e7514d574ac03844"s;
+    slice IC5 = "a5b39f216568118429dd651836de3d8663e4f36273b14652282157802c35fd1190ef0ff56ae67aa60b4c2c1ea44e84a5"s;
+    slice IC6 = "a7dfaac4f604325d7c113c52129ee9c6e6fef9490e9964119a884c31021299a26a76c0b1ca11bafdee2e69c94a860196"s;
+    slice IC7 = "a23cd821fb7167b307ca3b0bbc9e639151b2388951cd7c38d98dbe9c9eecdfba60acc1f2ee1adea3831a32f392171146"s;
+
+    slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+    slice delta2 = "a844ace9da2c9a376718891b978b1ab9414adb794d6f470cfa9b3826b673dc6b5dd2bf03741149ddf01d55d7e283f7610973514d4c74cf404829af4a736be3ed491d976319eb1b802b902bb9b2d0aca0d83a8e1098ce81b0717569f9a9a70ee7"s;
+    slice alf1 = "ac7d702040f8605838e8a33df1d873128a5a8af3874e0a32e08fc56b35c143c94b73d5284de0efee6494e2f70fe8ac40"s;
+    slice beta2 = "ad621c5feb3a525f0a20a834fea9eb8b2009bcd77075f1c8fa8a7da0c4e2b4adeb388840c1eb739a4f3f4956f7de6f2e145d4681628e7a756eb9338645ddda256f061baa5a5aef1d15e7a309d4b968bb7d636fe2b108c91de4d24bd1aadc2c84"s;
+
+    cell A_cell = proof_cell~load_ref();
+    cell B_cell = proof_cell~load_ref();
+    cell C_cell = proof_cell~load_ref();
+    slice A = A_cell.begin_parse();
+    slice B = B_cell.begin_parse();
+    slice C = C_cell.begin_parse();
+    slice vk_x = IC0;
+
+
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, root));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC2, public_amount));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC3, ext_data_hash));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC4, inputNullifier_0));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC5, inputNullifier_1));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC6, outputCommitment_0));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC7, outputCommitment_1));
+
+
+
+    slice neg_a = bls_g1_negate(A);
+    return bls_pairing_check(neg_a,
+        B,
+        alf1,
+        beta2,
+        vk_x,
+        gamma2,
+        C,
+        delta2,
+        4);
+}
+
+
+(int) calculatePublicAmount(int extAmount, int fee) impure inline {
+
+    throw_unless(error::verify_failed_fee, fee < MAX_FEE);
+    int publicAmount = extAmount - fee;
+    if (publicAmount >= 0) {
+        return publicAmount;
+    }
+    return FIELD_SIZE - (-1 * publicAmount);
+}
+
+(tuple, cell) validate_dict_stuck(cell stuck_list, cell stucks, int howmany) impure inline {
+    tuple commitment_list = empty_tuple();
+    repeat (howmany / 2) {
+        (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
+        throw_unless(error::empty_stuck, flag_stuck_list);
+        int commitment_value = val_stuck_list~load_uint(256);
+        (slice val_stucks_storage, int flag_stucks_storage) = stucks~udict_delete_get?(256,commitment_value);
+        throw_unless(error::empty_stuck, flag_stucks_storage);
+        int flag = val_stucks_storage~load_uint(4);
+        if (flag == 1) {
+            ;; it's a transact
+            int commitment_value_1 = val_stucks_storage~load_uint(256);
+            int commitment_value_2 = val_stucks_storage~load_uint(256);
+            (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
+            throw_unless(error::empty_stuck, flag_stuck_list);
+            throw_unless(error::empty_stuck + 1, val_stuck_list~load_uint(256) == commitment_value_2);
+            commitment_list~tpush(
+                begin_cell().store_uint(commitment_value_1, 256).store_uint(commitment_value_2, 256).end_cell().begin_parse()
+            );
+        } else {
+            ;; it's a deposit
+            (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
+            throw_unless(error::empty_stuck, val_stuck_list~load_uint(256) == ZERO_VALUE);
+            commitment_list~tpush(
+                begin_cell().store_uint(commitment_value, 256).store_uint(ZERO_VALUE, 256).end_cell().begin_parse()
+            );
+        }
+    }
+    (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
+    throw_unless(error::empty_stuck, ~ flag_stuck_list);
+    return (commitment_list, stucks);
+}
+
+
+;; recv_internal is the main function of the contract and is called when it receives a message from other contracts
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        ;; ignore all empty messages
+        return ();
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) {
+        ;; ignore all bounced messages
+        return ();
+    }
+    slice sender_address = cs~load_msg_addr();
+
+    (cell merkle, cell hash_contract_code, cell stucks, slice fee_recepient, int fee_per_thousand, int balance) = load_data(); ;; here we populate the storage variables
+
+    slice in_msg_body_copy = in_msg_body;
+    int op = in_msg_body~load_uint(32); ;; by convention, the first 32 bits of incoming message is the op
+
+
+
+    if (op == op::change_code) {
+        int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+        cell new_code = in_msg_body~load_ref();
+        throw_unless(error::access_denied, equal_slices(sender_address, fee_recepient));
+        set_code(new_code);
+
+        return ();
+    }
+
+
+    if (op == op::deposit) {
+        ;; this is deposit for the first time
+        int query_id = in_msg_body~load_uint(64);
+        int deposit_amount = in_msg_body~load_coins();
+        int fee_amount = muldiv(deposit_amount, fee_per_thousand, 1000); ;; protocol fee
+        throw_unless(error::fund, deposit_amount + const::tx_fee_deposit + fee_amount <= msg_value);
+
+
+        ;; _ a:^Cell b:^Cell c:^Cell = Proof;
+        ;; _ commitment:uint256 new_root:uint256 old_root:uint256 proof:Proof = Commitment;
+        ;; deposit#888 query_id:uint64 deposit_amount:gram commitment:Commitment = InMsgBody;
+
+        cell commitment = in_msg_body~load_ref();
+        slice commitment_slice = commitment.begin_parse();
+        int commitment_value = commitment_slice~load_uint(256);
+        throw_unless(error::verify_failed_input, commitment_value < FIELD_SIZE);
+
+        deploy_hash_contract(commitment_value, sender_address, begin_cell().store_slice(in_msg_body_copy).end_cell(), hash_contract_code);
+
+        return ();
+    }
+    if (op == op::transact) {
+        int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+        ;; Proof inputs
+        ;; signal input root;
+        ;; signal input publicAmount; (not needed as input, we can calculate it with extAmount & fee)
+        ;; signal input extDataHash;
+        ;; signal input inputNullifier[nIns];
+        ;; signal input outputCommitment[nOuts];
+
+
+        ;; struct ExtData {
+        ;;     address recipient;
+        ;;     int256 extAmount;
+        ;;     uint64 fee;
+        ;;     bytes encryptedOutput1;
+        ;;     bytes encryptedOutput2;
+        ;; }
+
+
+
+        ;; _ a:^Cell b:^Cell c:^Cell = Proof;
+        ;; _  = EncryptedOutput;
+        ;; _ fee:uint64 extAmount:int248 recipient:MsgAddress encryptedOutput_0:^EncryptedOutput encryptedOutput_1:^EncryptedOutput = ExtData;
+        ;; _ outputCommitment_0:uint256 outputCommitment_1:uint256 _:^ExtData = RemainingData;
+        ;; _ root:uint256 inputNullifier_0:uint256 inputNullifier_1:uint256 _:^RemainingData _:^Proof = Info;
+        ;; withdraw#777 query_id:uint64 _:Info = InMsgBody;
+        ;; 32 + 64 + 256 * 2 + 10 + 128 = 746
+
+
+
+
+
+        cell withdraw_info = in_msg_body~load_ref();
+        slice withdraw_info_slice1 = withdraw_info.begin_parse();
+        int root = withdraw_info_slice1~load_uint(256);
+        throw_unless(error::verify_failed_input, root < FIELD_SIZE);
+        throw_unless(error::verify_failed_root, is_known_root(root, merkle));
+
+        int nullifier_hash_0 = withdraw_info_slice1~load_uint(256);
+        int nullifier_hash_1 = withdraw_info_slice1~load_uint(256);
+        withdraw_info_slice1 = withdraw_info_slice1~load_ref().begin_parse();
+        withdraw_info_slice1 = withdraw_info_slice1~load_ref().begin_parse();
+        int fee = withdraw_info_slice1~load_uint(64);
+        int extAmount = withdraw_info_slice1~load_int(248);
+        throw_unless(error::verify_failed_input, nullifier_hash_0 < FIELD_SIZE);
+        throw_unless(error::verify_failed_input, nullifier_hash_1 < FIELD_SIZE);
+        if (extAmount > 0) {
+            int protocol_fee_amount = muldiv(extAmount, fee_per_thousand, 1000); ;; protocol fee
+            throw_unless(error::fund, extAmount + const::tx_fee_transact + protocol_fee_amount <= msg_value);
+        }
+
+        calculatePublicAmount(extAmount, fee);
+
+        deploy_hash_contract(nullifier_hash_0, sender_address, begin_cell().store_slice(in_msg_body_copy).end_cell(), hash_contract_code);
+
+        return ();
+    }
+
+
+
+    if (op == op::create_hash_result) {
+        int init? = in_msg_body~load_uint(2);
+
+        slice origin_sender = in_msg_body~load_msg_addr();
+
+
+
+        slice nested_cs = in_msg_body~load_ref().begin_parse();
+        slice nested_cs_copy = nested_cs;
+
+        op = nested_cs~load_uint(32);
+
+        if (op == op::deposit) {
+            if (init? == 1) {
+                ;; commitmentment is already created, refund the sender
+                send_ton(origin_sender, 0, 64); ;;or jettons with 64 mode
+                return ();
+            }
+            nested_cs~load_uint(64); ;; query_id
+
+            ;; signal input oldRoot;
+            ;; signal input newRoot;
+            ;; signal input leaves[1 << subtreeLevels];
+            ;; signal input pathIndices;
+            ;; signal input depositAmount;
+            int deposit_amount = nested_cs~load_coins();
+            nested_cs = nested_cs~load_ref().begin_parse();
+
+            int commitment_value = nested_cs~load_uint(256);
+            throw_unless(error::invalid_sender, equal_slices(sender_address, calculate_hash_contract_address_wrapped(commitment_value, my_address(), hash_contract_code)));
+
+            int new_root = nested_cs~load_uint(256);
+            int given_old_root = nested_cs~load_uint(256);
+            slice proof_insert = nested_cs~load_ref().begin_parse();
+            slice proof_deposit = nested_cs~load_ref().begin_parse();
+            (int old_root, int last_index) = get_last_root_handler(merkle);
+            ;; todo - check if pathIndices is last_index or last_index/2
+            int check = false;
+            if (given_old_root == old_root) {
+                try {
+                    check = check_proof_for_insert2(old_root, new_root, commitment_value, ZERO_VALUE, last_index / 2, deposit_amount, proof_insert);
+                } catch (_, _) {
+                    check = false;
+                }
+            }
+            ifnot (check) {
+                ;; check_proof_for_deposit so we assure that the commitment is valid
+                ~dump(commitment_value);
+                ~dump(deposit_amount);
+                check = check_proof_for_deposit(commitment_value, deposit_amount, proof_deposit);
+                ~dump(check);
+                if (~ check) {
+                    ~dump(111132);
+                    send_ton(origin_sender, 0, 64); ;;or jettons with 64 mode
+                    return ();
+                }
+
+                ;; actually it's 2 commitmenets, but we don't need to second one cause it's zero
+                ;; first 4 bits are flag, if it's 0 then it's [commitment, 0] else [0, commitment]
+                stucks~udict_set(256, commitment_value, begin_cell().store_uint(0, 4).store_uint(commitment_value, 256).end_cell().begin_parse());
+            } else {
+                (int index, merkle) = insert_batch(new_root, merkle, 2);
+                ;; NewCommitment
+                emit_log_simple(op::deposit, begin_cell().store_uint(0, 8).store_uint(commitment_value, 256).store_uint(index, 32).end_cell().begin_parse());
+            }
+
+
+            balance += deposit_amount;
+            raw_reserve(balance + const::min_storage, 0);
+
+            save_data(merkle, hash_contract_code, stucks, fee_recepient, fee_per_thousand, balance);
+            if (deposit_amount > 0) {
+                int protocol_fee_amount = muldiv(deposit_amount, fee_per_thousand, 1000); ;; protocol fee
+
+                send_ton(fee_recepient, protocol_fee_amount, 1);
+                send_ton(origin_sender, 0, 128);
+
+            }
+            return ();
+        }
+
+        if (op == op::transact) {
+            if (init? == 1) {
+                send_ton(origin_sender, 0, 64); ;;or jettons with 64 mode
+                return ();
+            }
+            nested_cs = nested_cs~load_ref().begin_parse();
+            ;; _ a:^Cell b:^Cell c:^Cell = Proof;
+            ;; _  = EncryptedOutput;
+            ;; _ fee:uint64 extAmount:int248 recipient:MsgAddress encryptedOutput_0:^EncryptedOutput encryptedOutput_1:^EncryptedOutput = ExtData;
+            ;; _ outputCommitment_0:uint256 outputCommitment_1:uint256 _:^ExtData = RemainingData;
+            ;; _ root:uint256 inputNullifier_0:uint256 inputNullifier_1:uint256 _:^RemainingData _:^Proof = Info;
+            ;; withdraw#777 query_id:uint64 _:Info = InMsgBody;
+            ;; 32 + 64 + 256 * 2 + 10 + 128 = 746
+
+            int root = nested_cs~load_uint(256);
+            int inputNullifier_0 = nested_cs~load_uint(256);
+            int inputNullifier_1 = nested_cs~load_uint(256);
+            slice remaining_ds = nested_cs~load_ref().begin_parse();
+            slice proof_cell = nested_cs~load_ref().begin_parse();
+
+            int outputCommitment_0 = remaining_ds~load_uint(256);
+            int outputCommitment_1 = remaining_ds~load_uint(256);
+            slice ext_data_cell = remaining_ds~load_ref().begin_parse();
+            int ext_data_hash = ext_data_cell.slice_hash() % FIELD_SIZE;
+            int fee = ext_data_cell~load_uint(64);
+            int extAmount = ext_data_cell~load_int(248);
+
+            slice recipient = ext_data_cell~load_msg_addr();
+
+            int public_amount = calculatePublicAmount(extAmount, fee);
+
+            if (equal_slices(sender_address, calculate_hash_contract_address_wrapped(inputNullifier_0, my_address(), hash_contract_code))) {
+                ;; now send the second one
+                deploy_hash_contract(inputNullifier_1, origin_sender, begin_cell().store_slice(nested_cs_copy).end_cell(), hash_contract_code);
+                return ();
+            } elseif (~ equal_slices(sender_address, calculate_hash_contract_address_wrapped(inputNullifier_1, my_address(), hash_contract_code))) {
+                throw(error::invalid_sender);
+            }
+
+
+
+            int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, proof_cell);
+
+            int protocol_fee_amount = muldiv(extAmount, fee_per_thousand, 1000); ;; protocol fee
+
+            ifnot (success) {
+                destroy_hash_contract(sender_address, origin_sender, 5000000, 0);
+                int amount = 5000000;
+                if (extAmount > 0) {
+                    amount += extAmount + protocol_fee_amount;
+                }
+                destroy_hash_contract(calculate_hash_contract_address_wrapped(inputNullifier_0, my_address(), hash_contract_code), origin_sender, amount, 0);
+                return ();
+            }
+            balance += extAmount;
+            balance -= fee;
+
+
+            if (extAmount > 0) {
+                ~dump(13123);
+                ~dump(protocol_fee_amount);
+                send_ton(fee_recepient, protocol_fee_amount, 1);
+            } elseif (extAmount < 0) {
+                send_ton(recipient, -1 * extAmount, 1);
+            }
+
+            raw_reserve(balance + const::min_storage, 0);
+
+
+
+            stucks~udict_set(256, outputCommitment_0, begin_cell().store_uint(1, 4).store_uint(outputCommitment_0, 256).store_uint(outputCommitment_1, 256).end_cell().begin_parse());
+
+
+            save_data(merkle, hash_contract_code, stucks, fee_recepient, fee_per_thousand, balance);
+
+            emit_log_simple(op::transact, begin_cell().store_uint(1, 8).store_slice(nested_cs_copy).end_cell().begin_parse());
+            if (fee > 0) {
+                ~dump(balance);
+                ~dump(fee);
+                ~dump(public_amount);
+                send_ton(origin_sender, 0, 128);
+            }
+            return ();
+
+        }
+
+    }
+
+    if (op == op::remove_stuck_32) {
+        int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+        cell stuck_list = in_msg_body~load_dict();
+        (tuple commitment_list, stucks) = validate_dict_stuck(stuck_list, stucks, 32);
+
+
+
+
+        (int root, int offset) = get_last_root_handler(merkle);
+        if (offset % 32 != 0) {
+            throw(1000);
+        }
+
+        cell args = in_msg_body~load_ref();
+        slice args_slice = args.begin_parse();
+        int args_hash = args_slice~load_uint(256);
+        int _currentRoot = args_slice~load_uint(256);
+        int _newRoot = args_slice~load_uint(256);
+        int _pathIndices = args_slice~load_uint(32);
+        slice insert_proof_slice = args_slice~load_ref().begin_parse();
+
+        throw_unless(error::verify_failed_input + 100, _currentRoot == root);
+        throw_unless(error::verify_failed_input + 101, _pathIndices == offset >> 5);
+
+        slice header_slice = begin_cell().store_uint(_currentRoot, 256).store_uint(_newRoot, 256).store_uint(_pathIndices, 32).end_cell().begin_parse();
+        slice middle = commitment_list.at(1);
+        slice s1 = begin_cell().store_slice(commitment_list.at(0)).store_slice(middle~load_bits(256)).end_cell().begin_parse();
+        slice s2 = begin_cell().store_slice(middle).store_slice(commitment_list.at(2)).end_cell().begin_parse();
+        int hash_all = hash_sha256_16(header_slice, s1, s2, commitment_list.at(3),
+            commitment_list.at(4), commitment_list.at(5), commitment_list.at(6), commitment_list.at(7),
+            commitment_list.at(8), commitment_list.at(9), commitment_list.at(10), commitment_list.at(11), commitment_list.at(12), commitment_list.at(13), commitment_list.at(14), commitment_list.at(15));
+        ~dump(hash_all);
+        ~dump(args_hash);
+        throw_unless(error::verify_failed_input + 99, hash_all % FIELD_SIZE == args_hash);
+        throw_unless(error::verify_failed_input + 102, args_hash < FIELD_SIZE);
+
+
+        int check = check_proof_for_insert_batch(args_hash, insert_proof_slice);
+        ~dump(check);
+        ~dump(3123);
+        throw_unless(error::verify_failed_input + 103, check);
+        (offset, merkle) = insert_batch(_newRoot, merkle, 32);
+
+
+
+        emit_log_simple(op::remove_stuck_32, begin_cell().store_uint(2, 8).store_uint(offset, 32).end_cell().begin_parse());
+
+        save_data(merkle, hash_contract_code, stucks, fee_recepient, fee_per_thousand, balance);
+        send_ton(sender_address, 0, 64);
+        return ();
+
+
+    }
+
+    if (op == op::remove_stuck_16) {
+        int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+        cell stuck_list = in_msg_body~load_dict();
+        (tuple commitment_list, stucks) = validate_dict_stuck(stuck_list, stucks, 16);
+
+
+
+        (int root, int offset) = get_last_root_handler(merkle);
+        if (offset % 16 != 0) {
+            throw(1000);
+        }
+
+        cell args = in_msg_body~load_ref();
+        slice args_slice = args.begin_parse();
+        int args_hash = args_slice~load_uint(256);
+        int _currentRoot = args_slice~load_uint(256);
+        int _newRoot = args_slice~load_uint(256);
+        int _pathIndices = args_slice~load_uint(32);
+        slice insert_proof_slice = args_slice~load_ref().begin_parse();
+
+        throw_unless(error::verify_failed_input + 100, _currentRoot == root);
+        throw_unless(error::verify_failed_input + 101, _pathIndices == offset >> 4);
+
+        slice header_slice = begin_cell().store_uint(_currentRoot, 256).store_uint(_newRoot, 256).store_uint(_pathIndices, 32).end_cell().begin_parse();
+        int hash_all = hash_sha256_9(header_slice, commitment_list.at(0), commitment_list.at(1), commitment_list.at(2), commitment_list.at(3),
+            commitment_list.at(4), commitment_list.at(5), commitment_list.at(6), commitment_list.at(7));
+
+        throw_unless(error::verify_failed_input + 99, hash_all % FIELD_SIZE == args_hash);
+        throw_unless(error::verify_failed_input + 102, args_hash < FIELD_SIZE);
+
+
+        int check = check_proof_for_insert_batch16(args_hash, insert_proof_slice);
+        ~dump(check);
+        ~dump(3123);
+        throw_unless(error::verify_failed_input + 103, check);
+        (offset, merkle) = insert_batch(_newRoot, merkle, 16);
+
+
+
+        emit_log_simple(op::remove_stuck_16, begin_cell().store_uint(3, 8).store_uint(offset, 32).end_cell().begin_parse());
+
+        save_data(merkle, hash_contract_code, stucks, fee_recepient, fee_per_thousand, balance);
+        send_ton(sender_address, 0, 64);
+        return ();
+
+    }
+
+    if (op == op::remove_stuck_8) {
+        int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+        cell stuck_list = in_msg_body~load_dict();
+
+        (tuple commitment_list, stucks) = validate_dict_stuck(stuck_list, stucks, 8);
+
+        (int root, int offset) = get_last_root_handler(merkle);
+        if (offset % 8 != 0) {
+            throw(1000);
+        }
+
+        cell args = in_msg_body~load_ref();
+        slice args_slice = args.begin_parse();
+        int args_hash = args_slice~load_uint(256);
+        int _currentRoot = args_slice~load_uint(256);
+        int _newRoot = args_slice~load_uint(256);
+        int _pathIndices = args_slice~load_uint(32);
+        slice insert_proof_slice = args_slice~load_ref().begin_parse();
+
+        throw_unless(error::verify_failed_input + 100, _currentRoot == root);
+        throw_unless(error::verify_failed_input + 101, _pathIndices == offset >> 3);
+
+        slice header_slice = begin_cell().store_uint(_currentRoot, 256).store_uint(_newRoot, 256).store_uint(_pathIndices, 32).end_cell().begin_parse();
+        int hash_all = hash_sha256_5(header_slice, commitment_list.at(0), commitment_list.at(1), commitment_list.at(2),
+            commitment_list.at(3));
+
+        throw_unless(error::verify_failed_input + 99, hash_all % FIELD_SIZE == args_hash);
+        throw_unless(error::verify_failed_input + 102, args_hash < FIELD_SIZE);
+
+
+        int check = check_proof_for_insert_batch8(args_hash, insert_proof_slice);
+        throw_unless(error::verify_failed_input + 103, check);
+        (offset, merkle) = insert_batch(_newRoot, merkle, 8);
+
+
+
+        emit_log_simple(op::remove_stuck_8, begin_cell().store_uint(4, 8).store_uint(offset, 32).end_cell().begin_parse());
+
+        save_data(merkle, hash_contract_code, stucks, fee_recepient, fee_per_thousand, balance);
+        send_ton(sender_address, 0, 64);
+        return ();
+
+    }
+
+
+    throw(0xffff); ;; if the message contains an op that is not known to this contract, we throw
+}
+
+;;
+;; (int, slice) check_verify(slice in_msg_body) method_id {
+;;     in_msg_body~load_uint(32 + 64);
+;;     (cell merkle, cell hash_contract_code, cell stucks, slice fee_recepient, int fee_per_thousand, int balance) = load_data(); ;; here we populate the storage variables
+;;
+;;     slice alf1 =  "a5873e6d96ffab9a1d1a2383aa4c6c31f79c73fa196a97d4835411e757beeb53065907a5724ad6f8c60a211709a85100"s;
+;;     slice IC0 =  "b4b5edc739440dc8e16b4fcd13470a7ed44e7ac426e6524859e31aea94b5ec4151495648ce35b7a03ce03e5fb7581f40"s;
+;;     slice IC1 =  "a0f38c27859d2ff21a505f66f2ba5bdf5a40abdadf81da1f08c40b1ce87f3dbc70acfb57d18211b00a9680bce0511492"s;
+;;     slice IC2 =  "a89dc74f743c5e14dc2cce820ed2f5cef21f668a0cd6c6fc3db6e20a0d6a120ae4b1c1ac04f30fdf8eee3eb78ccbe740"s;
+;;     slice IC3 =  "ae90a407c92b5d8b23e9b328160571e677052d70503a19a710b34ca430fa7bf403398d3c01bb84f9cbb7c630c1c55693"s;
+;;     slice IC4 =  "85f873d389b56d880410984340f7975400a4bb13e177aec78a1857866a7d0c9877c70b53fd84c2809926e6629c91a822"s;
+;;     slice beta2 =  "92450f226a7e5888ace0212aa0519b36563a25506cf3bcb846a26810a012c215c51c5d728e97a802806c8a7330e3a4d10d13d0cb2195abddbf22667e7c332c0d8efbd36e062de2ae78ca5a5c6ff1e12cbe90522edddad20da234895b3acf9b95"s;
+;;     slice gamma2 =  "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+;;     slice delta2 =  "b3b0b3a363f95519366e8bfc765883fd8d8f58ab575f3d79a826b5ef2dadf047dce5bd0408e279ae7bb6e11804855607131c70a7b37eb0254896df782ca5f8d513e0ba1fe70766dcfac75121df2f9760f163430cc547e693baca1701c65dc3e4"s;
+;;
+;;     cell withdraw_info = in_msg_body~load_ref();
+;;     slice withdraw_info_slice1 = withdraw_info.begin_parse();
+;;     int root = withdraw_info_slice1~load_uint(256);
+;;     int nullifier_hash = withdraw_info_slice1~load_uint(256);
+;;     int fee_coef = withdraw_info_slice1~load_uint(10);
+;;     cell addresses = withdraw_info_slice1~load_ref();
+;;     slice addresses_slice = addresses.begin_parse();
+;;     slice recipient = addresses_slice~load_msg_addr();
+;;     ;; throw_unless(error::verify_failed_double_spend, is_unknown_nullifier(nullifier_hash, nullifiers));
+;;     throw_unless(error::verify_failed_input, root < FIELD_SIZE);
+;;     throw_unless(error::verify_failed_input, nullifier_hash < FIELD_SIZE);
+;;     throw_unless(error::verify_failed_fee, fee_coef < 1000);
+;;     throw_unless(error::verify_failed_root, is_known_root(root, merkle));
+;;
+;;     cell A_cell = withdraw_info_slice1~load_ref();
+;;     cell B_cell = withdraw_info_slice1~load_ref();
+;;     cell C_cell = withdraw_info_slice1~load_ref();
+;;     slice A = A_cell.begin_parse();
+;;     slice B = B_cell.begin_parse();
+;;     slice C = C_cell.begin_parse();
+;;     slice vk_x = IC0;
+;;
+;;
+;;     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, root));
+;;     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC2, nullifier_hash));
+;;     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC3, recipient.preload_uint(256)));
+;;     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC4, fee_coef));
+;;
+;;
+;;     slice neg_a = bls_g1_negate(A);
+;;     int success = bls_pairing_check(neg_a,
+;;         B,
+;;         alf1,
+;;         beta2,
+;;         vk_x,
+;;         gamma2,
+;;         C,
+;;         delta2,
+;;         4);
+;;     ifnot (success) {
+;;         return (0, addr_none);
+;;     }
+;;
+;;     cell hash_contract_state_init = calculate_hash_contract_state_init(nullifier_hash, my_address(), hash_contract_code);
+;;     slice hash_contract_address = calculate_hash_contract_address(hash_contract_state_init);
+;;     return (1, hash_contract_address);
+;; }
+
+(int) get_last_root() method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice fee_recepient, int fee_per_thousand, _) = load_data(); ;; here we populate the storage variables
+    (int root, _) = get_last_root_handler(merkle);
+    return root;
+}
+
+(cell) get_stuck() method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice fee_recepient, int fee_per_thousand, _) = load_data(); ;; here we populate the storage variables
+    return stucks;
+}
+
+(int) get_root_known(int root) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice fee_recepient, int fee_per_thousand, _) = load_data(); ;; here we populate the storage variables
+    return is_known_root(root, merkle);
+}
+
+(int) get_tvl() method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice fee_recepient, int fee_per_thousand, int balance) = load_data(); ;; here we populate the storage variables
+    return balance;
+}
+
+(slice) get_hash_contract(int hash) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice fee_recepient, int fee_per_thousand, _) = load_data(); ;; here we populate the storage variables
+    cell hash_contract_state_init = calculate_hash_contract_state_init(hash, my_address(), hash_contract_code);
+    slice hash_contract_address = calculate_hash_contract_address(hash_contract_state_init);
+
+    return hash_contract_address;
+}

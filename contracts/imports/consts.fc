@@ -1,0 +1,61 @@
+;; op-codes
+
+;; Tonnel
+const int op::deposit = 0x888;
+const int op::transact = 0x777;
+const int op::change_config = 0x999;
+const int op::remove_stuck_32 = 0x11132;
+const int op::remove_stuck_16 = 0x11116;
+const int op::remove_stuck_8 = 0x1118;
+const int op::change_fee_address = 0x1c69253d;
+const int op::change_fee_coef = 0x44f37bdf;
+const int op::set_tonnel_tree = 0x666;
+const int op::claim_fee = 0x222;
+const int op::change_code = 0x5443;
+
+;; Jetton
+int op::transfer() asm "0xf8a7ea5 PUSHINT";
+int op::transfer_notification() asm "0x7362d09c PUSHINT";
+int op::internal_transfer() asm "0x178d4519 PUSHINT";
+int op::excesses() asm "0xd53276db PUSHINT";
+int op::burn() asm "0x595f07bc PUSHINT";
+int op::burn_notification() asm "0x7bdd97de PUSHINT";
+
+;; Minter
+int op::mint() asm "21 PUSHINT";
+
+;; Hash Contract
+const int op::create_hash = "op::create_hash"c;
+const int op::check_hash = "op::check_hash"c;
+const int op::check_hash_result = "op::check_hash_result"c;
+const int op::create_hash_result = "op::create_hash_result"c;
+const int op::destroy = "op::destroy"c;
+
+;; error codes
+const error::unknown_op = 101;
+const error::access_denied = 102;
+const error::fund = 103;
+const error::verify_failed = 104;
+const error::verify_failed_fee = 105;
+const error::verify_failed_root = 106;
+const error::verify_failed_double_spend = 107;
+const error::verify_failed_input = 108;
+const error::empty_stuck = 109;
+const error::jetton_sender = 110;
+const error::verify_failed_ext_amount = 120;
+
+const error::invalid_sender = 110;
+const error::unknown = 0xffff;
+
+;; Tonnel consts
+const ONE_TON = 1000000000;
+const SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE = 64;
+const const::tx_fee_send_jetton = 40000000; ;; 0.04 TON
+const const::tx_fee_send_tree = 30000000; ;; 0.03 TON
+
+
+const int MAX_FEE = 1000 * ONE_TON;
+;; HashContract consts
+const const::reserve_value = 6000000;
+
+const slice addr_none = "2_"s;

@@ -1,0 +1,28 @@
+cell pack_hash_contract_data(int hash, slice owner) inline {
+   return  begin_cell()
+            .store_uint(0, 2)
+            .store_uint(hash, 256)
+            .store_slice(owner)
+           .end_cell();
+}
+
+cell calculate_hash_contract_state_init(int hash, slice owner, cell hash_contract_code) inline {
+  return begin_cell()
+          .store_uint(0, 2)
+          .store_maybe_ref(hash_contract_code)
+          .store_maybe_ref(pack_hash_contract_data(hash, owner))
+          .store_uint(0, 1)
+         .end_cell();
+}
+
+slice calculate_hash_contract_address(cell state_init) inline {
+  return begin_cell().store_uint(4, 3)
+                     .store_int(0, 8)
+                     .store_uint(cell_hash(state_init), 256)
+                     .end_cell()
+                     .begin_parse();
+}
+
+slice calculate_hash_contract_address_wrapped(int hash, slice owner, cell hash_contract_code) inline {
+  return calculate_hash_contract_address(calculate_hash_contract_state_init(hash, owner, hash_contract_code));
+}

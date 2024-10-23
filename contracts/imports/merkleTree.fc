@@ -1,0 +1,67 @@
+const FIELD_SIZE = 52435875175126190479447740508185965837690552500527637822603658699938581184513;
+const ZERO_VALUE = 21663839004416932945382355908790599225266501822907911457504978515578255421292;
+;; const POOL_SIZE = 5 * 1000000000; ;; 5 TON for Mainnet:)
+
+;; other
+const const::tx_fee_deposit = 130000000; ;; 0.13 TON
+const const::tx_fee_transact = 120000000; ;; 0.12 TON
+
+
+(int, cell) insert_batch(int root, cell merkle_data_cell, int howmany) impure {
+    slice merkle_data = merkle_data_cell.begin_parse();
+    int currentRootIndex = merkle_data~load_uint(8);
+    int nextIndex = merkle_data~load_uint(32);
+    cell roots = merkle_data~load_dict();
+
+    currentRootIndex = (currentRootIndex + 1) % 100;
+    roots~udict_set(8, currentRootIndex, begin_cell().store_uint(root, 256).end_cell().begin_parse());
+    nextIndex = nextIndex + howmany;
+    return (nextIndex - 1, begin_cell().store_uint(currentRootIndex, 8).store_uint(nextIndex, 32).store_dict(roots).end_cell());
+}
+
+
+
+
+(int) is_known_root(int root, cell merkle_cell) impure {
+    if (root == 0){
+        return 0;
+    }
+
+    slice merkle = merkle_cell.begin_parse();
+    int currentRootIndex = merkle~load_uint(8);
+    merkle~load_uint(32);
+    cell roots = merkle~load_dict();
+
+    int i = currentRootIndex;
+
+    do {
+
+        (slice root_slice, int found) = roots.udict_get?(8, i);
+
+        if(found == 0){
+            return 0;
+        }
+        if(root_slice~load_uint(256) == root){
+            return 1;
+        }
+
+        if( i == 0 ){
+            i = 100;
+        }
+        i -= 1;
+    } until (i == currentRootIndex);
+    return 0;
+
+}
+
+(int, int) get_last_root_handler(cell merkle_cell) impure {
+    slice merkle = merkle_cell.begin_parse();
+    int currentRootIndex = merkle~load_uint(8);
+    int last_index = merkle~load_uint(32);
+    cell roots = merkle~load_dict();
+    (slice root_slice, int found) = roots.udict_get?(8, currentRootIndex);
+    if(found == 0){
+        return (0, last_index);
+    }
+    return (root_slice~load_uint(256), last_index);
+}

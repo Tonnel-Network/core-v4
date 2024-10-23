@@ -1,0 +1,78 @@
+#include "imports/stdlib.fc";
+#include "imports/consts.fc";
+
+(int, int, slice) load_data() impure inline {
+    var ds = get_data().begin_parse();
+    return (ds~load_uint(2), ds~load_uint(256), ds);
+}
+
+;; save_data stores storage variables as a cell into persistent storage
+() save_data(int init?, int hash, slice owner) impure inline {
+    set_data(
+            begin_cell().store_uint(init?, 2).store_uint(hash, 256).store_slice(owner).end_cell()
+    );
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) { ;; ignore all bounced messages
+        return ();
+    }
+    slice sender_address = cs~load_msg_addr();
+
+    (int init?, int hash, slice owner) = load_data();
+
+    int op = in_msg_body~load_uint(32);
+
+    ;; if (op == op::check_hash) {
+    ;;     var msg = begin_cell()
+    ;;         .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+    ;;         .store_slice(sender_address)
+    ;;         .store_coins(0)
+    ;;         .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+    ;;         .store_uint(op::check_hash_result, 32)
+    ;;         .store_int(init?, 1)
+    ;;         .store_slice(in_msg_body)
+    ;;         .end_cell();
+    ;;     send_raw_message(msg, 64);
+    ;;     return ();
+    ;; }
+
+    if (op == op::create_hash) {
+
+        throw_unless(error::invalid_sender, equal_slices(sender_address, owner));
+        var msg = begin_cell()
+            .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+            .store_slice(sender_address)
+            .store_coins(msg_value - const::reserve_value)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+            .store_uint(op::create_hash_result, 32)
+            .store_uint(init?, 2)
+            .store_slice(in_msg_body)
+            .end_cell();
+        send_raw_message(msg, 0);
+
+        save_data(1,hash,owner);
+
+        return ();
+    }
+
+    if (op == op::destroy) {
+        throw_unless(error::invalid_sender, equal_slices(sender_address, owner));
+        var msg = begin_cell()
+            .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+            .store_slice(in_msg_body~load_msg_addr())
+            .store_coins(0)
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+            .end_cell();
+        send_raw_message(msg, 128 + 32);
+        return ();
+    }
+
+    throw(error::unknown);
+}
+
+(int, int, slice) get_info() method_id {
+    return load_data();
+}
