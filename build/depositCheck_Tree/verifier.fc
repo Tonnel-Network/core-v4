@@ -1,0 +1,206 @@
+#include "imports/stdlib.fc";
+
+const op::verify = "op::verify"c;
+const int P1_SIZE = 48 * 8;
+const int P2_SIZE = 96 * 8;
+
+
+
+const slice IC0 = "a0590d1d4b7e17f4ebb612b236fb611f1f61f4ca9255f7fce32f2b45f9f34e951ecc855fa108fc6459b770ed6bf47b06"s;
+const slice IC1 = "942b4663cfeee6e285b08588f8a3bc05d014f1128d1e94de24976d46bdbfa72d840ea8b76a4bf697fa952ccf60115006"s;
+const slice IC2 = "a33c7718136330dd08a26671449de7c97bbcd49716e876c64f986f8f6ff33a70393a33ecfe05c8b6a6b9a8f77fe023de"s;
+const slice IC3 = "a07e2cd2753e63996df3c7a1c14a80a23aaae894f800321d4276950db6d421042e927dba117c2e04b4ac21565f38228e"s;
+const slice IC4 = "99df6b2c3d418dc770821a3b308673a8248903d60b974600f7b8d3a97ee1e19716751ef597b55007c9410d4246a3fa53"s;
+const slice IC5 = "a19de982446dabceda663b95aa9de41f1f3079af57d2669e35fd6d308b5010c136d507fcbb3df917bf9525917e4272f8"s;
+const slice IC6 = "88b51be04fde8d27f6b687fae49bec9d4075ff8603f68b7e372cdd8632677aee6ae4db9801d55c65adf6824d6a12ffbd"s;
+
+const slice vk_gamma_2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+const slice vk_delta_2 = "a0720fe72e26e0d2e44bf2c09f194d3edeccfe2376758c528b2fa6217d0b9b628e021808acfa317ca357cb3d4263917912da58df60f0eb38d34ade1ca20b369cc9993d42dbe31853afa62df7a7ff5e293351611f7a593b4bbaf720c410f0d3aa"s;
+const slice vk_alpha_1 = "ac7d702040f8605838e8a33df1d873128a5a8af3874e0a32e08fc56b35c143c94b73d5284de0efee6494e2f70fe8ac40"s;
+const slice vk_beta_2 = "ad621c5feb3a525f0a20a834fea9eb8b2009bcd77075f1c8fa8a7da0c4e2b4adeb388840c1eb739a4f3f4956f7de6f2e145d4681628e7a756eb9338645ddda256f061baa5a5aef1d15e7a309d4b968bb7d636fe2b108c91de4d24bd1aadc2c84"s;
+
+slice bls_g1_add(slice x, slice y) asm "BLS_G1_ADD";
+slice bls_g1_neg(slice x) asm "BLS_G1_NEG";
+slice bls_g1_multiexp(
+    
+    slice x1, int y1,
+    
+    slice x2, int y2,
+    
+    slice x3, int y3,
+    
+    slice x4, int y4,
+    
+    slice x5, int y5,
+    
+    slice x6, int y6,
+    
+    int n
+) asm "BLS_G1_MULTIEXP";
+int bls_pairing(slice x1, slice y1, slice x2, slice y2, slice x3, slice y3, slice x4, slice y4, int n) asm "BLS_PAIRING";
+
+global int ctx_res;
+
+;; load_data populates storage variables using stored data
+() load_data() impure {
+
+    var ds = get_data().begin_parse();
+
+    ctx_res = ds~load_uint(32);
+
+    ds.end_parse();
+}
+
+;; save_data stores storage variables as a cell into persistent storage
+() save_data() impure {
+    set_data(
+        begin_cell()
+            .store_uint(ctx_res, 32)
+            .end_cell()
+    );
+}
+
+
+(slice, slice) load_p1(slice body) impure {
+    cell c = body~load_ref();
+    slice s = c.begin_parse();
+    slice p1 = first_bits(s, P1_SIZE);
+    s~skip_bits(P1_SIZE);
+    return (s, p1);
+}
+
+(slice, slice) load_p2(slice body) impure {
+    cell c = body~load_ref();
+    slice s = c.begin_parse();
+    slice p2 = first_bits(s, P2_SIZE);
+    s~skip_bits(P2_SIZE);
+    return (s, p2);
+}
+
+(slice, int) load_newint(slice body) impure {
+    cell c = body~load_ref();
+    slice s = c.begin_parse();
+    int x = s~load_uint(256);
+    return (s, x);
+}
+
+() groth16Verify(
+    slice pi_a,
+    slice pi_b,
+    slice pi_c,
+    
+    int pubInput0 ,
+    
+    int pubInput1 ,
+    
+    int pubInput2 ,
+    
+    int pubInput3 ,
+    
+    int pubInput4 ,
+    
+    int pubInput5 
+    
+) impure {
+
+    slice cpub = bls_g1_multiexp(
+        
+        IC1, pubInput0,
+        
+        IC2, pubInput1,
+        
+        IC3, pubInput2,
+        
+        IC4, pubInput3,
+        
+        IC5, pubInput4,
+        
+        IC6, pubInput5,
+        
+        6
+    );
+
+
+    cpub = bls_g1_add(cpub, IC0);
+    slice pi_a_neg = bls_g1_neg(pi_a);
+    int a = bls_pairing(
+        cpub, vk_gamma_2,
+        pi_a_neg, pi_b,
+        pi_c, vk_delta_2,
+        vk_alpha_1, vk_beta_2,
+        4);
+    ;; ctx_res = a;
+    if (a == 0) {
+        ctx_res = 0;
+    } else {
+        ctx_res = 1;
+    }
+    save_data();
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+
+    if (in_msg_body.slice_empty?()) { ;; ignore all empty messages
+        return ();
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) { ;; ignore all bounced messages
+        return ();
+    }
+
+    int op = in_msg_body~load_uint(32); ;; by convention, the first 32 bits of incoming message is the op
+    int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+
+    
+    if (op == op::verify) {
+
+        slice pi_a = in_msg_body~load_p1();
+        slice pi_b = in_msg_body~load_p2();
+        slice pi_c = in_msg_body~load_p1();
+
+
+        
+        int pubInput0 = in_msg_body~load_newint();
+        
+        int pubInput1 = in_msg_body~load_newint();
+        
+        int pubInput2 = in_msg_body~load_newint();
+        
+        int pubInput3 = in_msg_body~load_newint();
+        
+        int pubInput4 = in_msg_body~load_newint();
+        
+        int pubInput5 = in_msg_body~load_newint();
+        
+
+        groth16Verify(
+            pi_a,
+            pi_b,
+            pi_c,
+            
+            pubInput0 ,
+            
+            pubInput1 ,
+            
+            pubInput2 ,
+            
+            pubInput3 ,
+            
+            pubInput4 ,
+            
+            pubInput5 
+            
+        );
+        return ();
+    }
+
+    throw(0xffff); ;; if the message contains an op that is not known to this contract, we throw
+}
+
+
+int get_res() method_id {
+    load_data();
+    return ctx_res;
+}
