@@ -51,37 +51,37 @@ function hashInputs(input: {
 	return result
 }
 
-const wasmPathTreeDeposit = path.join(__dirname, "../build/tv4/depositCheck_Tree/merkleTreeUpdater.wasm");
-const zkeyPathTreeDeposit = path.join(__dirname, "../build/tv4/depositCheck_Tree/merkleTreeUpdater.zkey");
-const vkeyTreeDepositPath = path.join(__dirname, "../build/tv4/depositCheck_Tree/verification_key_merkleTreeUpdater.json");
+const wasmPathTreeDeposit = path.join(__dirname, "../build/depositCheck_Tree/merkleTreeUpdater.wasm");
+const zkeyPathTreeDeposit = path.join(__dirname, "../build/depositCheck_Tree/merkleTreeUpdater.zkey");
+const vkeyTreeDepositPath = path.join(__dirname, "../build/depositCheck_Tree/verification_key_merkleTreeUpdater.json");
 const vkeyTreeDeposit = require(vkeyTreeDepositPath);
 
-const wasmPathTreeDepositHash = path.join(__dirname, "../build/tv4/depositCheck/depositChecker.wasm");
-const zkeyPathTreeDepositHash = path.join(__dirname, "../build/tv4/depositCheck/depositChecker.zkey");
-const vkeyTreeDepositHashPath = path.join(__dirname, "../build/tv4/depositCheck/verification_key.json");
+const wasmPathTreeDepositHash = path.join(__dirname, "../build/depositCheck/depositChecker.wasm");
+const zkeyPathTreeDepositHash = path.join(__dirname, "../build/depositCheck/depositChecker.zkey");
+const vkeyTreeDepositHashPath = path.join(__dirname, "../build/depositCheck/verification_key.json");
 const vkeyTreeDepositHash = require(vkeyTreeDepositHashPath);
 
 
 const wasmPathTreeBatch = {
-	32: path.join(__dirname, "../build/tv4/treeBatch32/merkleTreeUpdaterBatch.wasm"),
-	16: path.join(__dirname, "../build/tv4/treeBatch16/merkleTreeUpdaterBatch.wasm"),
-	8: path.join(__dirname, "../build/tv4/treeBatch8/merkleTreeUpdaterBatch.wasm")
+	32: path.join(__dirname, "../build/treeBatch32/merkleTreeUpdaterBatch.wasm"),
+	16: path.join(__dirname, "../build/treeBatch16/merkleTreeUpdaterBatch.wasm"),
+	8: path.join(__dirname, "../build/treeBatch8/merkleTreeUpdaterBatch.wasm")
 };
 const zkeyPathTreeBatch = {
-	32: path.join(__dirname, "../build/tv4/treeBatch32/merkleTreeUpdaterBatch.zkey"),
-	16: path.join(__dirname, "../build/tv4/treeBatch16/merkleTreeUpdaterBatch.zkey"),
-	8: path.join(__dirname, "../build/tv4/treeBatch8/merkleTreeUpdaterBatch.zkey")
+	32: path.join(__dirname, "../build/treeBatch32/merkleTreeUpdaterBatch.zkey"),
+	16: path.join(__dirname, "../build/treeBatch16/merkleTreeUpdaterBatch.zkey"),
+	8: path.join(__dirname, "../build/treeBatch8/merkleTreeUpdaterBatch.zkey")
 };
 const vkeyTreeBatch = {
-	32: require(path.join(__dirname, "../build/tv4/treeBatch32/verification_key.json")),
-	16: require(path.join(__dirname, "../build/tv4/treeBatch16/verification_key.json")),
-	8: require(path.join(__dirname, "../build/tv4/treeBatch8/verification_key.json"))
+	32: require(path.join(__dirname, "../build/treeBatch32/verification_key.json")),
+	16: require(path.join(__dirname, "../build/treeBatch16/verification_key.json")),
+	8: require(path.join(__dirname, "../build/treeBatch8/verification_key.json"))
 };
 
 
-const wasmPathTransact2 = path.join(__dirname, "../build/tv4/transaction2/transaction2.wasm");
-const zkeyPathTransact2 = path.join(__dirname, "../build/tv4/transaction2/transaction2.zkey");
-const vkeyTransact2Path = path.join(__dirname, "../build/tv4/transaction2/verification_key_transaction2.json");
+const wasmPathTransact2 = path.join(__dirname, "../build/transaction2/transaction2.wasm");
+const zkeyPathTransact2 = path.join(__dirname, "../build/transaction2/transaction2.zkey");
+const vkeyTransact2Path = path.join(__dirname, "../build/transaction2/verification_key_transaction2.json");
 const vkeyTransact2 = require(vkeyTransact2Path);
 
 
