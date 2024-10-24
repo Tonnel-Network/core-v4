@@ -5,6 +5,8 @@ const ZERO_VALUE = 2166383900441693294538235590879059922526650182290791145750497
 ;; other
 const const::tx_fee_deposit = 130000000; ;; 0.13 TON
 const const::tx_fee_transact = 120000000; ;; 0.12 TON
+const const::max_protocol_fee = 5000000000; ;; 5 TON
+const const::min_deposit = 1000000000; ;; 1 TON
 
 
 (int, cell) insert_batch(int root, cell merkle_data_cell, int howmany) impure {

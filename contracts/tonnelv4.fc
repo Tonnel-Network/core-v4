@@ -415,6 +415,8 @@ const int const::min_storage = 500000000; ;;0.5 TON
         ;; this is deposit for the first time
         int query_id = in_msg_body~load_uint(64);
         int deposit_amount = in_msg_body~load_coins();
+        throw_unless(error::fund, deposit_amount >= const::min_deposit);
+
         int fee_amount = muldiv(deposit_amount, fee_per_thousand, 1000); ;; protocol fee
         throw_unless(error::fund, deposit_amount + const::tx_fee_deposit + fee_amount <= msg_value);
 
@@ -480,6 +482,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
         throw_unless(error::verify_failed_input, nullifier_hash_1 < FIELD_SIZE);
         if (extAmount > 0) {
             int protocol_fee_amount = muldiv(extAmount, fee_per_thousand, 1000); ;; protocol fee
+            protocol_fee_amount = min(protocol_fee_amount, const::max_protocol_fee);
             throw_unless(error::fund, extAmount + const::tx_fee_transact + protocol_fee_amount <= msg_value);
         }
 
@@ -552,6 +555,8 @@ const int const::min_storage = 500000000; ;;0.5 TON
                 ;; actually it's 2 commitmenets, but we don't need to second one cause it's zero
                 ;; first 4 bits are flag, if it's 0 then it's [commitment, 0] else [0, commitment]
                 stucks~udict_set(256, commitment_value, begin_cell().store_uint(0, 4).store_uint(commitment_value, 256).end_cell().begin_parse());
+                emit_log_simple(op::deposit, begin_cell().store_uint(5, 8).store_uint(commitment_value, 256).end_cell().begin_parse());
+
             } else {
                 (int index, merkle) = insert_batch(new_root, merkle, 2);
                 ;; NewCommitment
@@ -565,6 +570,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
             save_data(merkle, hash_contract_code, stucks, fee_recepient, fee_per_thousand, balance);
             if (deposit_amount > 0) {
                 int protocol_fee_amount = muldiv(deposit_amount, fee_per_thousand, 1000); ;; protocol fee
+                protocol_fee_amount = min(protocol_fee_amount, const::max_protocol_fee);
 
                 send_ton(fee_recepient, protocol_fee_amount, 1);
                 send_ton(origin_sender, 0, 128);
@@ -617,6 +623,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
             int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, proof_cell);
 
             int protocol_fee_amount = muldiv(extAmount, fee_per_thousand, 1000); ;; protocol fee
+            protocol_fee_amount = min(protocol_fee_amount, const::max_protocol_fee);
 
             ifnot (success) {
                 destroy_hash_contract(sender_address, origin_sender, 5000000, 0);
