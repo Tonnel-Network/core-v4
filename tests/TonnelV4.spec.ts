@@ -1,5 +1,5 @@
 import {Blockchain, SandboxContract, TreasuryContract} from '@ton/sandbox';
-import {Address, beginCell, Cell, Dictionary, toNano} from '@ton/core';
+import { Address, beginCell, Cell, Dictionary, fromNano, toNano } from '@ton/core';
 import '@ton/test-utils';
 import {compile} from '@ton/blueprint';
 import {parseG1Func, parseG2Func} from "../utils/circuit";
@@ -53,7 +53,7 @@ function hashInputs(input: {
 
 const wasmPathTreeDeposit = path.join(__dirname, "../build/depositCheck_Tree/merkleTreeUpdater.wasm");
 const zkeyPathTreeDeposit = path.join(__dirname, "../build/depositCheck_Tree/merkleTreeUpdater.zkey");
-const vkeyTreeDepositPath = path.join(__dirname, "../build/depositCheck_Tree/verification_key_merkleTreeUpdater.json");
+const vkeyTreeDepositPath = path.join(__dirname, "../build/depositCheck_Tree/verification_key.json");
 const vkeyTreeDeposit = require(vkeyTreeDepositPath);
 
 const wasmPathTreeDepositHash = path.join(__dirname, "../build/depositCheck/depositChecker.wasm");
@@ -81,11 +81,11 @@ const vkeyTreeBatch = {
 
 const wasmPathTransact2 = path.join(__dirname, "../build/transaction2/transaction2.wasm");
 const zkeyPathTransact2 = path.join(__dirname, "../build/transaction2/transaction2.zkey");
-const vkeyTransact2Path = path.join(__dirname, "../build/transaction2/verification_key_transaction2.json");
+const vkeyTransact2Path = path.join(__dirname, "../build/transaction2/verification_key.json");
 const vkeyTransact2 = require(vkeyTransact2Path);
 
 
-const protocol_fee = 10;
+const protocol_fee_per_thousand = 10;
 const tx_fee_deposit = 130000000n; // 0.13 TON
 const tx_fee_transact = 120000000n; // 0.12 TON
 const tx_fee_stuck = 150000000n; // 0.15 TON
@@ -183,8 +183,10 @@ describe('Tonnel', () => {
 			)
 			.endCell()
 		let before = await tonnel.getBalance();
-		const depositResult = await tonnel.sendDeposit(sender.getSender(), {
-			value: deposit_utxo.amount + ((deposit_utxo.amount * BigInt(protocol_fee)) / 1000n) + tx_fee_deposit,
+		const protocol_fee_amount = await tonnel.getProtocolFee(deposit_utxo.amount)
+		console.log('protocol_fee_amount', fromNano(deposit_utxo.amount) , fromNano(protocol_fee_amount));
+		const depositResult = await tonnel.sendInternal(sender.getSender(), {
+			value: deposit_utxo.amount + protocol_fee_amount + tx_fee_deposit,
 			payload: payload
 		});
 		let after = await tonnel.getBalance();
@@ -196,22 +198,23 @@ describe('Tonnel', () => {
 			success: true,
 		});
 
-
+		// should receive at least protocol_fee_amount but not much more:)
 		expect(depositResult.transactions).toHaveTransaction({
 			from: tonnel.address,
 			to: owner.address,
 			success: true,
 			value: (value) => {
 				if (value) {
-					if (value - (deposit_utxo.amount * BigInt(protocol_fee)) / 1000n > toNano('0.5')) {
+					if (value - protocol_fee_amount > toNano('0.5')) {
 						return false
 					}
-					return value >= (deposit_utxo.amount * BigInt(protocol_fee)) / 1000n
+					return value >= protocol_fee_amount
 				}
 				return false
 			},
 		});
 
+		// sender should receive the residual of gas amount but not much
 		expect(depositResult.transactions).toHaveTransaction({
 			from: tonnel.address,
 			to: sender.address,
@@ -246,7 +249,8 @@ describe('Tonnel', () => {
 		tree: MerkleTree;
 		recipient: Address;
 		sender: SandboxContract<any>;
-	}) {
+	})
+	{
 		const rootInit = await tonnel.getLastRoot();
 		const tvlBefore = await tonnel.getTVL();
 
@@ -380,15 +384,22 @@ describe('Tonnel', () => {
 			)
 			.endCell()
 		let before = await tonnel.getBalance();
-		const depositResult = await tonnel.sendDeposit(sender.getSender(), {
-			value: tx_fee_transact + (extAmount > 0 ? BigInt(extAmount) + BigInt(extAmount) * BigInt(protocol_fee) / 1000n : 0n),
+		const protocol_fee_amount = extAmount > 0 ? await tonnel.getProtocolFee(BigInt(extAmount)): 0n
+		const value = tx_fee_transact + (extAmount > 0 ? BigInt(extAmount) + protocol_fee_amount : 0n)
+		if (!(await tonnel.getCheckTransact(payload, value))) {
+			throw new Error('Check failed')
+		}
+
+
+		const depositResult = await tonnel.sendInternal(sender.getSender(), {
+			value,
 			payload: payload
 		});
 		let after = await tonnel.getBalance();
 		console.log('before: ', before)
 		console.log('after: ', after)
 
-		console.log(tx_fee_transact + (extAmount > 0 ? BigInt(extAmount) + BigInt(extAmount) * BigInt(protocol_fee) / 1000n : 0n))
+		console.log(tx_fee_transact + (extAmount > 0 ? BigInt(extAmount) + protocol_fee_amount : 0n))
 		expect(after).toBeGreaterThanOrEqual(before + (BigInt(extAmount) - BigInt(fee)));
 
 
@@ -422,10 +433,11 @@ describe('Tonnel', () => {
 
 
 		if (extAmount > 0) {
+
 			expect(depositResult.transactions).toHaveTransaction({
 				from: tonnel.address,
 				to: owner.address,
-				value: BigInt(extAmount) * BigInt(protocol_fee) / 1000n,
+				value: protocol_fee_amount,
 				success: true,
 			});
 		} else {
@@ -473,7 +485,8 @@ describe('Tonnel', () => {
 	async function clearStucks(stuckDict: Map<bigint, {
 		commitment1: bigint;
 		commitment2: bigint
-	}>, tree: MerkleTree, sender: SandboxContract<TreasuryContract>, count = 32) {
+	}>, tree: MerkleTree, sender: SandboxContract<TreasuryContract>, count = 32)
+	{
 		const length_before = stuckDict.size
 		if (count != 32 && count != 16 && count != 8) {
 			throw new Error(`Tree size is not multiple of ${count}`)
@@ -537,8 +550,9 @@ describe('Tonnel', () => {
 		let B_x = proof.pi_b[0].map((num: string) => BigInt(num))
 		let B_y = proof.pi_b[1].map((num: string) => BigInt(num))
 		let payload = beginCell()
-			.storeUint(BigInt('0x111' + count), 32)
+			.storeUint(BigInt('0x111'), 32)
 			.storeUint(0, 64)
+			.storeUint(Math.floor(Math.log2(count)), 8)
 			.storeDict(
 				empty
 			).storeRef(
@@ -559,7 +573,10 @@ describe('Tonnel', () => {
 			.endCell()
 
 		let before = await tonnel.getBalance();
-		const depositResult = await tonnel.sendDeposit(sender.getSender(), {
+		if (!(await tonnel.getCheckStuckBatch(payload))) {
+			throw new Error('Check failed')
+		}
+		const depositResult = await tonnel.sendInternal(sender.getSender(), {
 			value: tx_fee_stuck,
 			payload: payload
 		});
@@ -637,7 +654,7 @@ describe('Tonnel', () => {
 			TonnelV4.createFromConfig(
 				{
 					ownerAddress: owner.address,
-					protocolFee: protocol_fee,
+					protocolFee: protocol_fee_per_thousand,
 					hash_contract_bytecode: codeHash,
 				},
 				code

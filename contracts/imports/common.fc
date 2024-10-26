@@ -1,0 +1,145 @@
+() deploy_hash_contract(int commitment, slice sender_address, cell nested_msg, cell hash_contract_code) impure inline {
+    cell hash_contract_state_init = calculate_hash_contract_state_init(commitment, my_address(), hash_contract_code);
+    cell msg = begin_cell()
+        .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+        .store_slice(calculate_hash_contract_address(hash_contract_state_init))
+        .store_coins(0)
+        .store_uint(6, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .store_ref(hash_contract_state_init)
+        .store_uint(op::create_hash, 32) ;; only check hash, change it after
+        .store_slice(sender_address)
+        .store_ref(nested_msg)
+        .end_cell();
+    send_raw_message(msg, 64);
+}
+
+
+() destroy_hash_contract(slice contract_address, slice relayer_address, int coins, int mode) impure inline {
+    cell msg = begin_cell()
+        .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+        .store_slice(contract_address)
+        .store_coins(coins)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .store_uint(op::destroy, 32) ;; only check hash, change it after
+        .store_slice(relayer_address)
+        .end_cell();
+    send_raw_message(msg, mode);
+}
+
+() send_ton(slice recepient, int amount, int mode) impure inline {
+    var msg = begin_cell()
+        .store_uint(0x10, 6)
+        .store_slice(recepient)
+        .store_grams(amount)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .end_cell();
+    send_raw_message(msg, mode);
+
+}
+
+() emit_log_simple(int event_id, slice data) impure inline {
+    var msg = begin_cell()
+        .store_uint(12, 4) ;; ext_out_msg_info$11 src:MsgAddressInt ()
+        .store_uint(1, 2)
+        .store_uint(256, 9)
+        .store_uint(event_id, 256)
+        .store_uint(0, 64 + 32 + 2) ;; created_lt, created_at, init:Maybe, body:Either
+        .store_slice(data)
+        .end_cell();
+    send_raw_message(msg, 0);
+}
+
+
+
+(int) calculatePublicAmount(int extAmount, int fee) impure inline {
+
+    throw_unless(error::verify_failed_fee, fee < MAX_FEE);
+    int publicAmount = extAmount - fee;
+    if (publicAmount >= 0) {
+        return publicAmount;
+    }
+    return FIELD_SIZE - (-1 * publicAmount);
+}
+
+
+
+(tuple, cell) validate_dict_stuck(cell stuck_list, cell stucks, int howmany) impure inline {
+    tuple commitment_list = empty_tuple();
+    repeat (howmany / 2) {
+        (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
+        throw_unless(error::empty_stuck, flag_stuck_list);
+        int commitment_value = val_stuck_list~load_uint(256);
+        (slice val_stucks_storage, int flag_stucks_storage) = stucks~udict_delete_get?(256, commitment_value);
+        throw_unless(error::empty_stuck, flag_stucks_storage);
+        int flag = val_stucks_storage~load_uint(4);
+        if (flag == 1) {
+            ;; it's a transact
+            int commitment_value_1 = val_stucks_storage~load_uint(256);
+            int commitment_value_2 = val_stucks_storage~load_uint(256);
+            (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
+            throw_unless(error::empty_stuck, flag_stuck_list);
+            throw_unless(error::empty_stuck + 1, val_stuck_list~load_uint(256) == commitment_value_2);
+            commitment_list~tpush(
+                begin_cell().store_uint(commitment_value_1, 256).store_uint(commitment_value_2, 256).end_cell().begin_parse()
+            );
+        } else {
+            ;; it's a deposit
+            (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
+            throw_unless(error::empty_stuck, val_stuck_list~load_uint(256) == ZERO_VALUE);
+            commitment_list~tpush(
+                begin_cell().store_uint(commitment_value, 256).store_uint(ZERO_VALUE, 256).end_cell().begin_parse()
+            );
+        }
+    }
+    (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
+    throw_unless(error::empty_stuck, ~ flag_stuck_list);
+    return (commitment_list, stucks);
+}
+
+
+(cell, int) insert_check(cell merkle, slice in_msg_body, int batch_depth, tuple commitment_list) impure inline {
+    (int root, int offset) = get_last_root_handler(merkle);
+    int batch_size = 1 << batch_depth;
+    if (offset % batch_size != 0) {
+        throw(1000);
+    }
+
+    cell args = in_msg_body~load_ref();
+    slice args_slice = args.begin_parse();
+    int args_hash = args_slice~load_uint(256);
+    int _currentRoot = args_slice~load_uint(256);
+    int _newRoot = args_slice~load_uint(256);
+    int _pathIndices = args_slice~load_uint(32);
+    slice insert_proof_slice = args_slice~load_ref().begin_parse();
+
+    throw_unless(error::verify_failed_input + 100, _currentRoot == root);
+    throw_unless(error::verify_failed_input + 101, _pathIndices == offset >> batch_depth);
+
+    slice header_slice = begin_cell().store_uint(_currentRoot, 256).store_uint(_newRoot, 256).store_uint(_pathIndices, 32).end_cell().begin_parse();
+    int hash_all = 0;
+    if (batch_size == 16) {
+        hash_all = hash_sha256_9(header_slice, commitment_list.at(0), commitment_list.at(1), commitment_list.at(2), commitment_list.at(3),
+            commitment_list.at(4), commitment_list.at(5), commitment_list.at(6), commitment_list.at(7));
+    } elseif (batch_size == 32) {
+        slice middle = commitment_list.at(1);
+        slice s1 = begin_cell().store_slice(commitment_list.at(0)).store_slice(middle~load_bits(256)).end_cell().begin_parse();
+        slice s2 = begin_cell().store_slice(middle).store_slice(commitment_list.at(2)).end_cell().begin_parse();
+        hash_all = hash_sha256_16(header_slice, s1, s2, commitment_list.at(3),
+            commitment_list.at(4), commitment_list.at(5), commitment_list.at(6), commitment_list.at(7),
+            commitment_list.at(8), commitment_list.at(9), commitment_list.at(10), commitment_list.at(11), commitment_list.at(12), commitment_list.at(13), commitment_list.at(14), commitment_list.at(15));
+
+    } elseif (batch_size == 8) {
+        hash_all = hash_sha256_5(header_slice, commitment_list.at(0), commitment_list.at(1), commitment_list.at(2),
+            commitment_list.at(3));
+    }
+    throw_unless(error::verify_failed_input + 99, hash_all % FIELD_SIZE == args_hash);
+    throw_unless(error::verify_failed_input + 102, args_hash < FIELD_SIZE);
+
+
+    int check = check_proof_for_insert_batch(args_hash, insert_proof_slice, batch_size);
+    throw_unless(error::verify_failed_input + 103, check);
+    (offset, merkle) = insert_batch(_newRoot, merkle, batch_size);
+
+    return (merkle, offset);
+
+}

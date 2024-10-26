@@ -4,9 +4,7 @@
 const int op::deposit = 0x888;
 const int op::transact = 0x777;
 const int op::change_config = 0x999;
-const int op::remove_stuck_32 = 0x11132;
-const int op::remove_stuck_16 = 0x11116;
-const int op::remove_stuck_8 = 0x1118;
+const int op::remove_stuck = 0x111;
 const int op::change_fee_address = 0x1c69253d;
 const int op::change_fee_coef = 0x44f37bdf;
 const int op::set_tonnel_tree = 0x666;
