@@ -8,7 +8,13 @@
 #include "imports/common.fc";
 
 
-const int const::min_storage = 500000000; ;;0.5 TON
+const const::tx_fee_deposit = 130000000; ;; 0.13 TON
+const const::tx_fee_transact = 120000000; ;; 0.12 TON
+
+
+
+const const::max_protocol_fee = 5000000000; ;; 5 TON
+const const::min_deposit = 1000000000; ;; 1 TON
 ;; load_data populates storage variables using stored data
 (cell, cell, cell, slice, int, int) load_data() impure {
     var ds = get_data().begin_parse();
@@ -86,10 +92,10 @@ const int const::min_storage = 500000000; ;;0.5 TON
 
         int query_id = in_msg_body~load_uint(64);
         int deposit_amount = in_msg_body~load_coins();
-        throw_unless(error::fund, deposit_amount >= const::min_deposit);
+        throw_unless(error::fund_min_deposit, deposit_amount >= const::min_deposit);
 
         int protocol_fee_amount = calculate_protocol_fee(deposit_amount, fee_per_thousand);
-        throw_unless(error::fund, deposit_amount + const::tx_fee_deposit + protocol_fee_amount <= msg_value);
+        throw_unless(error::fund_deposit_ton_enough, deposit_amount + const::tx_fee_deposit + protocol_fee_amount <= msg_value);
 
 
 
@@ -122,8 +128,8 @@ const int const::min_storage = 500000000; ;;0.5 TON
         cell withdraw_info = in_msg_body~load_ref();
         slice withdraw_info_slice1 = withdraw_info.begin_parse();
         int root = withdraw_info_slice1~load_uint(256);
-        throw_unless(error::verify_failed_input, root < FIELD_SIZE);
-        throw_unless(error::verify_failed_root, is_known_root(root, merkle));
+        throw_unless(error::field_root_transact, root < FIELD_SIZE);
+        throw_unless(error::known_root, is_known_root(root, merkle));
 
         int nullifier_hash_0 = withdraw_info_slice1~load_uint(256);
         int nullifier_hash_1 = withdraw_info_slice1~load_uint(256);
@@ -131,12 +137,12 @@ const int const::min_storage = 500000000; ;;0.5 TON
         withdraw_info_slice1 = withdraw_info_slice1~load_ref().begin_parse();
         int fee = withdraw_info_slice1~load_uint(64);
         int extAmount = withdraw_info_slice1~load_int(248);
-        throw_unless(error::verify_failed_input, nullifier_hash_0 < FIELD_SIZE);
-        throw_unless(error::verify_failed_input, nullifier_hash_1 < FIELD_SIZE);
+        throw_unless(error::field_nullifier_hash_0_transact, nullifier_hash_0 < FIELD_SIZE);
+        throw_unless(error::field_nullifier_hash_1_transact, nullifier_hash_1 < FIELD_SIZE);
         if (extAmount > 0) {
             int protocol_fee_amount = calculate_protocol_fee(extAmount, fee_per_thousand);
 
-            throw_unless(error::fund, extAmount + const::tx_fee_transact + protocol_fee_amount <= msg_value);
+            throw_unless(error::fund_transact_ton_enough, extAmount + const::tx_fee_transact + protocol_fee_amount <= msg_value);
         }
 
         calculatePublicAmount(extAmount, fee);
@@ -172,7 +178,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
             nested_cs = nested_cs~load_ref().begin_parse();
 
             int commitment_value = nested_cs~load_uint(256);
-            throw_unless(error::invalid_sender, equal_slices(sender_address, calculate_hash_contract_address_wrapped(commitment_value, my_address(), hash_contract_code)));
+            throw_unless(error::invalid_sender_hash_deposit, equal_slices(sender_address, calculate_hash_contract_address_wrapped(commitment_value, my_address(), hash_contract_code)));
 
             int new_root = nested_cs~load_uint(256);
             int given_old_root = nested_cs~load_uint(256);
@@ -189,12 +195,8 @@ const int const::min_storage = 500000000; ;;0.5 TON
             }
             ifnot (check) {
                 ;; check_proof_for_deposit so we assure that the commitment is valid
-                ~dump(commitment_value);
-                ~dump(deposit_amount);
                 check = check_proof_for_deposit(commitment_value, deposit_amount, 0, proof_deposit);
-                ~dump(check);
                 if (~ check) {
-                    ~dump(111132);
                     send_ton(origin_sender, 0, 64); ;;or jettons with 64 mode
                     return ();
                 }
@@ -254,7 +256,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
                 deploy_hash_contract(inputNullifier_1, origin_sender, begin_cell().store_slice(nested_cs_copy).end_cell(), hash_contract_code);
                 return ();
             } elseif (~ equal_slices(sender_address, calculate_hash_contract_address_wrapped(inputNullifier_1, my_address(), hash_contract_code))) {
-                throw(error::invalid_sender);
+                throw(error::invalid_sender_hash_transact);
             }
 
 
@@ -346,16 +348,16 @@ const int const::min_storage = 500000000; ;;0.5 TON
 
     int root = nested_cs~load_uint(256);
 
-    throw_unless(error::verify_failed_input, root < FIELD_SIZE);
-    throw_unless(error::verify_failed_root, is_known_root(root, merkle));
+    throw_unless(error::field_root_transact, root < FIELD_SIZE);
+    throw_unless(error::known_root, is_known_root(root, merkle));
 
 
 
 
     int inputNullifier_0 = nested_cs~load_uint(256);
     int inputNullifier_1 = nested_cs~load_uint(256);
-    throw_unless(error::verify_failed_input, inputNullifier_1 < FIELD_SIZE);
-    throw_unless(error::verify_failed_input, inputNullifier_1 < FIELD_SIZE);
+    throw_unless(error::field_nullifier_hash_0_transact, inputNullifier_0 < FIELD_SIZE);
+    throw_unless(error::field_nullifier_hash_1_transact, inputNullifier_1 < FIELD_SIZE);
     slice remaining_ds = nested_cs~load_ref().begin_parse();
     slice proof_cell = nested_cs~load_ref().begin_parse();
 
@@ -370,7 +372,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
 
 
     if (extAmount > 0) {
-        throw_unless(error::fund, extAmount + const::tx_fee_transact + protocol_fee_amount <= msg_value);
+        throw_unless(error::fund_transact_ton_enough, extAmount + const::tx_fee_transact + protocol_fee_amount <= msg_value);
     }
     ext_data_cell~load_msg_addr();
 
@@ -383,7 +385,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
 
 
     ifnot (success) {
-        throw(1002);
+        throw(0xffff);
     }
 
 

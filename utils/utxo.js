@@ -70,7 +70,7 @@ class Utxo {
    * @returns {string} `0x`-prefixed hex string with data
    */
   encrypt() {
-    const bytes = Buffer.concat([toBuffer(this.amount, 31), toBuffer(this.blinding, 31)])
+    const bytes = Buffer.concat([toBuffer(this.amount, 31), toBuffer(this.blinding, 31),toBuffer(this.asset_id, 32)])
     return this.keypair.encrypt(bytes)
   }
 
@@ -87,6 +87,7 @@ class Utxo {
     return new Utxo({
       amount: BigInt('0x' + buf.slice(0, 31).toString('hex')),
       blinding: BigInt('0x' + buf.slice(31, 62).toString('hex')),
+      asset_id: BigInt('0x' + buf.slice(62, 94).toString('hex')),
       keypair,
       index,
     })

@@ -53,7 +53,6 @@
 
 (int) calculatePublicAmount(int extAmount, int fee) impure inline {
 
-    throw_unless(error::verify_failed_fee, fee < MAX_FEE);
     int publicAmount = extAmount - fee;
     if (publicAmount >= 0) {
         return publicAmount;
@@ -67,32 +66,32 @@
     tuple commitment_list = empty_tuple();
     repeat (howmany / 2) {
         (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
-        throw_unless(error::empty_stuck, flag_stuck_list);
+        throw_unless(error::stuck_dict_0, flag_stuck_list);
         int commitment_value = val_stuck_list~load_uint(256);
         (slice val_stucks_storage, int flag_stucks_storage) = stucks~udict_delete_get?(256, commitment_value);
-        throw_unless(error::empty_stuck, flag_stucks_storage);
+        throw_unless(error::stuck_dict_1, flag_stucks_storage);
         int flag = val_stucks_storage~load_uint(4);
         if (flag == 1) {
             ;; it's a transact
             int commitment_value_1 = val_stucks_storage~load_uint(256);
             int commitment_value_2 = val_stucks_storage~load_uint(256);
             (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
-            throw_unless(error::empty_stuck, flag_stuck_list);
-            throw_unless(error::empty_stuck + 1, val_stuck_list~load_uint(256) == commitment_value_2);
+            throw_unless(error::stuck_dict_2, flag_stuck_list);
+            throw_unless(error::stuck_dict_3, val_stuck_list~load_uint(256) == commitment_value_2);
             commitment_list~tpush(
                 begin_cell().store_uint(commitment_value_1, 256).store_uint(commitment_value_2, 256).end_cell().begin_parse()
             );
         } else {
             ;; it's a deposit
             (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
-            throw_unless(error::empty_stuck, val_stuck_list~load_uint(256) == ZERO_VALUE);
+            throw_unless(error::stuck_dict_4, val_stuck_list~load_uint(256) == ZERO_VALUE);
             commitment_list~tpush(
                 begin_cell().store_uint(commitment_value, 256).store_uint(ZERO_VALUE, 256).end_cell().begin_parse()
             );
         }
     }
     (stuck_list, _, slice val_stuck_list, int flag_stuck_list) = stuck_list.udict_delete_get_min(32);
-    throw_unless(error::empty_stuck, ~ flag_stuck_list);
+    throw_unless(error::stuck_dict_5, ~ flag_stuck_list);
     return (commitment_list, stucks);
 }
 
@@ -101,7 +100,7 @@
     (int root, int offset) = get_last_root_handler(merkle);
     int batch_size = 1 << batch_depth;
     if (offset % batch_size != 0) {
-        throw(1000);
+        throw(error::batch_size_not_match);
     }
 
     cell args = in_msg_body~load_ref();
@@ -112,8 +111,8 @@
     int _pathIndices = args_slice~load_uint(32);
     slice insert_proof_slice = args_slice~load_ref().begin_parse();
 
-    throw_unless(error::verify_failed_input + 100, _currentRoot == root);
-    throw_unless(error::verify_failed_input + 101, _pathIndices == offset >> batch_depth);
+    throw_unless(error::insert_root_match, _currentRoot == root);
+    throw_unless(error::path_indices_size, _pathIndices == offset >> batch_depth);
 
     slice header_slice = begin_cell().store_uint(_currentRoot, 256).store_uint(_newRoot, 256).store_uint(_pathIndices, 32).end_cell().begin_parse();
     int hash_all = 0;
@@ -132,14 +131,15 @@
         hash_all = hash_sha256_5(header_slice, commitment_list.at(0), commitment_list.at(1), commitment_list.at(2),
             commitment_list.at(3));
     }
-    throw_unless(error::verify_failed_input + 99, hash_all % FIELD_SIZE == args_hash);
-    throw_unless(error::verify_failed_input + 102, args_hash < FIELD_SIZE);
+    throw_unless(error::args_hash_match, hash_all % FIELD_SIZE == args_hash);
+    throw_unless(error::field_args_hash, args_hash < FIELD_SIZE);
 
 
     int check = check_proof_for_insert_batch(args_hash, insert_proof_slice, batch_size);
-    throw_unless(error::verify_failed_input + 103, check);
+    throw_unless(error::verify_insert_proof, check);
     (offset, merkle) = insert_batch(_newRoot, merkle, batch_size);
 
     return (merkle, offset);
 
 }
+

@@ -41,7 +41,7 @@
 
     if (op == op::create_hash) {
 
-        throw_unless(error::invalid_sender, equal_slices(sender_address, owner));
+        throw_unless(error::invalid_sender_create_hash_contract, equal_slices(sender_address, owner));
         var msg = begin_cell()
             .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
             .store_slice(sender_address)
@@ -59,7 +59,7 @@
     }
 
     if (op == op::destroy) {
-        throw_unless(error::invalid_sender, equal_slices(sender_address, owner));
+        throw_unless(error::invalid_sender_destroy_hash_contract, equal_slices(sender_address, owner));
         var msg = begin_cell()
             .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
             .store_slice(in_msg_body~load_msg_addr())
@@ -70,7 +70,7 @@
         return ();
     }
 
-    throw(error::unknown);
+    throw(0xffff);
 }
 
 (int, int, slice) get_info() method_id {

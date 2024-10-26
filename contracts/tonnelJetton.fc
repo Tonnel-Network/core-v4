@@ -1,0 +1,645 @@
+#include "imports/stdlib.fc";
+#include "imports/merkleTree.fc";
+#include "imports/jetton-utils.fc";
+#include "imports/consts.fc";
+#include "imports/hash-contract-utils.fc";
+#include "imports/proofs.fc";
+
+#include "imports/common.fc";
+
+const int const::min_storage = 500000000; ;;0.5 TON
+
+
+;; load_data populates storage variables using stored data
+(cell, cell, cell, slice, cell, cell) load_data() impure {
+    var ds = get_data().begin_parse();
+    slice admin = ds~load_msg_addr();
+    cell merkle = ds~load_ref();
+    cell dynamic_data = ds~load_ref();
+    cell hash_contract_code = ds~load_ref();
+    cell asset_config = ds~load_dict();
+    slice dynamic_data_slice = dynamic_data.begin_parse();
+    cell balanceSheet = dynamic_data_slice~load_dict();
+    cell stucks = dynamic_data_slice~load_dict();
+
+    return (merkle, hash_contract_code, stucks, admin, balanceSheet, asset_config);
+}
+
+;; save_data stores storage variables as a cell into persistent storage
+() save_data(cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) impure {
+    set_data(
+        begin_cell()
+            .store_slice(admin)
+            .store_ref(merkle)
+            .store_ref(
+                begin_cell()
+                    .store_dict(balanceSheet)
+                    .store_dict(stucks)
+                    .end_cell())
+            .store_ref(hash_contract_code)
+            .store_dict(asset_config)
+            .end_cell()
+    );
+}
+
+() send_jetton(slice recepient, int amount, slice jetton_wallet, int mode) impure inline {
+    if (amount == 0) {
+        return ();
+    }
+    var msg = begin_cell()
+        .store_uint(0x10, 6) ;; nobounce - int_msg_info$0 ihr_disabled:Bool bounce:Bool bounced:Bool src:MsgAddress -> 011000
+        .store_slice(jetton_wallet)
+        .store_coins(const::tx_fee_send_jetton)
+        .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
+        .store_maybe_ref(
+            begin_cell()
+                .store_uint(op::transfer(), 32)
+                .store_uint(0, 64)
+                .store_coins(amount)
+                .store_slice(recepient)
+                .store_slice(recepient)
+                .store_uint(0, 1)
+                .store_coins(1)
+                .store_uint(0, 1)
+                .end_cell()
+        );
+    send_raw_message(msg.end_cell(), mode); ;; paying fees, revert on errors
+
+}
+
+
+
+(int) calculate_protocol_fee(int deposit_amount, int fee_per_thousand_asset, int max_protocol_fee_asset) impure {
+    int protocol_fee_amount = muldiv(deposit_amount, fee_per_thousand_asset, 1000); ;; protocol fee
+    return min(protocol_fee_amount, max_protocol_fee_asset);
+}
+
+(slice, slice) get_jetton_config(int asset_id, cell asset_config) impure {
+    (slice config, int found) = asset_config.udict_get?(256, asset_id);
+    throw_unless(error::jetton_dict_found, found);
+    slice jetton_wallet = config~load_msg_addr();
+    throw_unless(error::jetton_dict_wallet_hash, jetton_wallet.slice_hash() == asset_id);
+    return (config, jetton_wallet);
+}
+
+(slice) get_ton_config(cell asset_config) impure {
+    (slice config, int found) = asset_config.udict_get?(256, 0);
+    return (config);
+}
+
+(int, int, int) load_config(slice config) impure {
+    int min_deposit = config~load_coins();
+    int fee_per_thousand = config~load_uint(10);
+    int max_protocol_fee_asset = config~load_coins();
+    return (min_deposit, fee_per_thousand, max_protocol_fee_asset);
+}
+
+(cell, int, int) update_balance_sheet(cell balanceSheet, int asset_id, int deposit_amount, int protocol_fee_amount) impure {
+    (slice asset, int found) = balanceSheet.udict_get?(256, asset_id);
+    int balance = 0;
+    int protocol_fee = 0;
+    if (found) {
+        balance = asset~load_coins();
+        protocol_fee = asset~load_coins();
+    }
+    balance += deposit_amount;
+    protocol_fee += protocol_fee_amount;
+
+    balanceSheet~udict_set(256, asset_id, begin_cell().store_coins(balance).store_coins(protocol_fee).end_cell().begin_parse());
+    return (balanceSheet, balance, protocol_fee);
+}
+
+
+;; recv_internal is the main function of the contract and is called when it receives a message from other contracts
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        ;; ignore all empty messages
+        return ();
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) {
+        ;; ignore all bounced messages
+        return ();
+    }
+    slice sender_address = cs~load_msg_addr();
+
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+
+    slice in_msg_body_copy = in_msg_body;
+    int op = in_msg_body~load_uint(32); ;; by convention, the first 32 bits of incoming message is the op
+
+    if (op == op::change_code) {
+        throw_unless(error::access_denied, equal_slices(sender_address, admin));
+
+        int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
+        cell new_code = in_msg_body~load_ref();
+        set_code(new_code);
+
+        return ();
+    }
+
+    if (op == op::change_config_asset){
+        throw_unless(error::access_denied, equal_slices(sender_address, admin));
+
+        int query_id = in_msg_body~load_uint(64);
+        int asset_id = in_msg_body~load_uint(256);
+        slice config = in_msg_body~load_ref().begin_parse();
+        asset_config~udict_set(256, asset_id, config);
+        save_data(merkle, hash_contract_code, stucks, admin, balanceSheet, asset_config);
+        return ();
+    }
+
+    if (op == op::remove_stuck) {
+        int query_id = in_msg_body~load_uint(64);
+        int batch_depth = in_msg_body~load_uint(8);
+        ;; 5 or 4 or 3 depth supported
+        cell stuck_list = in_msg_body~load_dict();
+
+        (tuple commitment_list, stucks) = validate_dict_stuck(stuck_list, stucks, 1 << batch_depth);
+
+        (merkle, int offset) = insert_check(merkle, in_msg_body, batch_depth, commitment_list);
+
+        emit_log_simple(op::remove_stuck, begin_cell().store_uint(1 << batch_depth, 8).store_uint(offset, 32).end_cell().begin_parse());
+
+        save_data(merkle, hash_contract_code, stucks, admin, balanceSheet, asset_config);
+        send_ton(sender_address, 0, 64);
+        return ();
+
+    }
+
+    int asset_id = 0;
+    int send_amount = msg_value;
+    int min_deposit = 0;
+    int max_protocol_fee_asset = 0;
+    int fee_per_thousand = 0;
+    if (op == op::transfer_notification()) {
+        int query_id = in_msg_body~load_uint(64);
+        ;; check hash(sender_address) in the dict of jetton configs
+
+        asset_id = sender_address.slice_hash();
+        (slice config, _) = get_jetton_config(asset_id, asset_config);
+
+
+        send_amount = in_msg_body~load_coins(); ;; Jettons send
+        slice origin_sender = in_msg_body~load_msg_addr(); ;; transfer origin address
+        in_msg_body = in_msg_body~load_ref().begin_parse();
+        in_msg_body_copy = in_msg_body;
+        op = in_msg_body~load_uint(32);
+
+
+        (min_deposit, fee_per_thousand, max_protocol_fee_asset) = load_config(config);
+
+        sender_address = origin_sender;
+
+    } else {
+        (slice config) = get_ton_config(asset_config);
+        (min_deposit, fee_per_thousand, max_protocol_fee_asset) = load_config(config);
+    }
+
+
+
+    if (op == op::deposit) {
+        ;; this is deposit for the first time
+        ;; _  = EncryptedOutput;
+        ;; _ a:^Cell b:^Cell c:^Cell = Proof;
+        ;; _ commitment:uint256 new_root:uint256 old_root:uint256 proof:Proof encryptedOutput_0:^EncryptedOutput = Commitment;
+        ;; deposit#888 query_id:uint64 deposit_amount:gram commitment:Commitment = InMsgBody;
+        int query_id = in_msg_body~load_uint(64);
+        int deposit_amount = in_msg_body~load_coins();
+        throw_unless(error::fund_min_deposit, deposit_amount >= min_deposit);
+
+        int protocol_fee_amount = calculate_protocol_fee(deposit_amount, fee_per_thousand, max_protocol_fee_asset);
+        if (asset_id == 0) {
+            ;; ton deposit
+            throw_unless(error::fund_deposit_ton_enough, deposit_amount + const::tx_fee_deposit_ton + protocol_fee_amount <= msg_value);
+        } else {
+            ;; jetton deposit
+            throw_unless(error::fund_deposit_jetton_gas_enough, const::tx_fee_deposit_jetton <= msg_value);
+            ;; ensure send_amount covvers deposit_amount and fee
+            throw_unless(error::fund_deposit_jetton_enough, send_amount >= deposit_amount + protocol_fee_amount);
+
+        }
+
+
+        cell commitment = in_msg_body~load_ref();
+        slice commitment_slice = commitment.begin_parse();
+        int commitment_value = commitment_slice~load_uint(256);
+        throw_unless(error::field_commitment_deposit, commitment_value < FIELD_SIZE);
+
+        deploy_hash_contract(commitment_value, sender_address, begin_cell().store_uint(asset_id, 256).store_slice(in_msg_body_copy).end_cell(), hash_contract_code);
+
+        return ();
+    }
+    if (op == op::transact) {
+
+        ;; _ a:^Cell b:^Cell c:^Cell = Proof;
+        ;; _  = EncryptedOutput;
+        ;; _ fee:uint64 extAmount:int248 recipient:MsgAddress encryptedOutput_0:^EncryptedOutput encryptedOutput_1:^EncryptedOutput = ExtData;
+        ;; _ outputCommitment_0:uint256 outputCommitment_1:uint256 _:^ExtData = RemainingData;
+        ;; _ root:uint256 inputNullifier_0:uint256 inputNullifier_1:uint256 _:^RemainingData _:^Proof = Info;
+        ;; withdraw#777 query_id:uint64 _:Info = InMsgBody;
+
+
+        int query_id = in_msg_body~load_uint(64);
+
+
+
+
+
+        cell withdraw_info = in_msg_body~load_ref();
+        slice withdraw_info_slice1 = withdraw_info.begin_parse();
+        int root = withdraw_info_slice1~load_uint(256);
+        throw_unless(error::field_root_transact, root < FIELD_SIZE);
+        throw_unless(error::known_root, is_known_root(root, merkle));
+
+        int nullifier_hash_0 = withdraw_info_slice1~load_uint(256);
+        int nullifier_hash_1 = withdraw_info_slice1~load_uint(256);
+        withdraw_info_slice1 = withdraw_info_slice1~load_ref().begin_parse();
+        withdraw_info_slice1 = withdraw_info_slice1~load_ref().begin_parse();
+        int fee = withdraw_info_slice1~load_uint(64);
+        int extAmount = withdraw_info_slice1~load_int(248);
+        throw_unless(error::field_nullifier_hash_0_transact, nullifier_hash_0 < FIELD_SIZE);
+        throw_unless(error::verify_nullifier_hash_1_transact, nullifier_hash_1 < FIELD_SIZE);
+        if (extAmount > 0) {
+            throw_unless(error::min_extAmount_transact, extAmount >= min_deposit);
+            int protocol_fee_amount = calculate_protocol_fee(extAmount, fee_per_thousand, max_protocol_fee_asset);
+
+            if (asset_id == 0) {
+                throw_unless(error::fund_transact_ton_enough, extAmount + const::tx_fee_transact_ton + protocol_fee_amount <= msg_value);
+            } else {
+                throw_unless(error::fund_transact_jetton_gas_enough, const::tx_fee_transact_jetton <= msg_value);
+                throw_unless(error::fund_transact_jetton_enough, send_amount >= extAmount + protocol_fee_amount);
+            }
+        }
+
+        calculatePublicAmount(extAmount, fee);
+
+        deploy_hash_contract(nullifier_hash_0, sender_address, begin_cell().store_uint(asset_id, 256).store_slice(in_msg_body_copy).end_cell(), hash_contract_code);
+
+        return ();
+    }
+
+
+
+    if (op == op::create_hash_result) {
+        ;; should set asset_id, min_deposit, fee_per_thousand, max_protocol_fee_asset
+        int init? = in_msg_body~load_uint(2);
+
+        slice origin_sender = in_msg_body~load_msg_addr();
+
+
+
+        slice nested_cs = in_msg_body~load_ref().begin_parse();
+        slice nested_cs_copy = nested_cs;
+        asset_id = nested_cs~load_uint(256);
+
+        slice jetton_wallet = addr_none;
+
+        if (asset_id == 0) {
+            ;; ton deposit
+            (slice config) = get_ton_config(asset_config);
+            (min_deposit, fee_per_thousand, max_protocol_fee_asset) = load_config(config);
+        } else {
+            ;; jetton deposit
+            (slice config, jetton_wallet) = get_jetton_config(asset_id, asset_config);
+            (min_deposit, fee_per_thousand, max_protocol_fee_asset) = load_config(config);
+        }
+
+
+        op = nested_cs~load_uint(32);
+
+        if (op == op::deposit) {
+            nested_cs~load_uint(64); ;; query_id
+
+            int deposit_amount = nested_cs~load_coins();
+            int protocol_fee_amount = calculate_protocol_fee(deposit_amount, fee_per_thousand, max_protocol_fee_asset);
+
+            if (init? == 1) {
+                ;; commitmentment is already created, refund the sender
+                if (asset_id == 0) {
+                    send_ton(origin_sender, 0, 64);
+                } else {
+                    send_jetton(origin_sender, deposit_amount + protocol_fee_amount, jetton_wallet, 64);
+                }
+                return ();
+            }
+
+            nested_cs = nested_cs~load_ref().begin_parse();
+
+            int commitment_value = nested_cs~load_uint(256);
+            throw_unless(error::invalid_sender_hash_deposit, equal_slices(sender_address, calculate_hash_contract_address_wrapped(commitment_value, my_address(), hash_contract_code)));
+
+            int new_root = nested_cs~load_uint(256);
+            int given_old_root = nested_cs~load_uint(256);
+            slice proof_insert = nested_cs~load_ref().begin_parse();
+            slice proof_deposit = nested_cs~load_ref().begin_parse();
+            (int old_root, int last_index) = get_last_root_handler(merkle);
+            int check = false;
+            if (given_old_root == old_root) {
+                try {
+                    check = check_proof_for_insert2(old_root, new_root, commitment_value, last_index / 2, deposit_amount, asset_id, proof_insert);
+                } catch (_, _) {
+                    check = false;
+                }
+            }
+            ifnot (check) {
+                ;; check_proof_for_deposit so we assure that the commitment is valid
+                check = check_proof_for_deposit(commitment_value, deposit_amount, asset_id, proof_deposit);
+                if (~ check) {
+                    if (asset_id == 0) {
+                        send_ton(origin_sender, 0, 64);
+                    } else {
+                        send_jetton(origin_sender, deposit_amount + protocol_fee_amount, jetton_wallet, 64);
+                    }
+                    return ();
+                }
+
+                ;; actually it's 2 commitmenets, but we don't need to second one cause it's zero
+                ;; first 4 bits are flag, if it's 0 then it's [commitment, 0] else [0, commitment]
+                stucks~udict_set(256, commitment_value, begin_cell().store_uint(0, 4).store_uint(commitment_value, 256).end_cell().begin_parse());
+                emit_log_simple(op::deposit, begin_cell().store_uint(0, 8).store_uint(commitment_value, 256).end_cell().begin_parse());
+
+            } else {
+                (int index, merkle) = insert_batch(new_root, merkle, 2);
+                ;; NewCommitment
+                emit_log_simple(op::deposit, begin_cell().store_uint(1, 8).store_uint(commitment_value, 256).store_uint(index, 32).end_cell().begin_parse());
+            }
+
+
+            ;; update balance sheet with the deposit amount and protocol fee
+
+            (cell balance_sheet_new, int balance_new, int protoocol_fee_new) = update_balance_sheet(balanceSheet, asset_id, deposit_amount, protocol_fee_amount);
+
+
+
+            save_data(merkle, hash_contract_code, stucks, admin, balance_sheet_new, asset_config);
+            if (deposit_amount > 0) {
+                if (asset_id == 0) {
+                    raw_reserve(balance_new + const::min_storage, 0);
+                    send_ton(origin_sender, 0, 128);
+                } else {
+                    send_ton(origin_sender, 0, 64);
+                }
+            }
+            return ();
+        }
+
+        if (op == op::transact) {
+            nested_cs = nested_cs~load_ref().begin_parse();
+
+            int root = nested_cs~load_uint(256);
+            int inputNullifier_0 = nested_cs~load_uint(256);
+            int inputNullifier_1 = nested_cs~load_uint(256);
+            slice remaining_ds = nested_cs~load_ref().begin_parse();
+            slice proof_cell = nested_cs~load_ref().begin_parse();
+
+            int outputCommitment_0 = remaining_ds~load_uint(256);
+            int outputCommitment_1 = remaining_ds~load_uint(256);
+            slice ext_data_cell = remaining_ds~load_ref().begin_parse();
+            int ext_data_hash = ext_data_cell.slice_hash() % FIELD_SIZE;
+            int fee = ext_data_cell~load_uint(64);
+            int extAmount = ext_data_cell~load_int(248);
+
+            int protocol_fee_amount = 0;
+            if (extAmount > 0) {
+                protocol_fee_amount = calculate_protocol_fee(extAmount, fee_per_thousand, max_protocol_fee_asset);
+            }
+
+
+            if (init? == 1) {
+                if (equal_slices(sender_address, calculate_hash_contract_address_wrapped(inputNullifier_1, my_address(), hash_contract_code))) {
+                    ;; the seoncd one was already initiated which means the first one was initiated by this transaction and we should uninitalize it
+                    destroy_hash_contract(calculate_hash_contract_address_wrapped(inputNullifier_0, my_address(), hash_contract_code), origin_sender, 5000000, 0);
+                }
+                if (asset_id == 0) {
+                    send_ton(origin_sender, 0, 64); ;;or jettons with 64 mode
+                    return ();
+                } else {
+                    if (extAmount > 0) {
+                        send_jetton(origin_sender, extAmount + protocol_fee_amount, jetton_wallet, 64);
+                        return ();
+                    } else {
+                        send_ton(origin_sender, 0, 64);
+                        return ();
+                    }
+
+                }
+            }
+
+            slice recipient = ext_data_cell~load_msg_addr();
+
+            int public_amount = calculatePublicAmount(extAmount, fee);
+
+            if (equal_slices(sender_address, calculate_hash_contract_address_wrapped(inputNullifier_0, my_address(), hash_contract_code))) {
+                ;; now send the second one
+                deploy_hash_contract(inputNullifier_1, origin_sender, begin_cell().store_slice(nested_cs_copy).end_cell(), hash_contract_code);
+                return ();
+            } elseif (~ equal_slices(sender_address, calculate_hash_contract_address_wrapped(inputNullifier_1, my_address(), hash_contract_code))) {
+                throw(error::invalid_sender_hash_transact);
+            }
+
+            int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, asset_id, proof_cell);
+
+            ifnot (success) {
+                destroy_hash_contract(sender_address, origin_sender, 5000000, 0);
+                int amount = 5000000;
+                if (asset_id == 0) {
+                    if (extAmount > 0) {
+                        amount += extAmount + protocol_fee_amount;
+                    }
+                    destroy_hash_contract(calculate_hash_contract_address_wrapped(inputNullifier_0, my_address(), hash_contract_code), origin_sender, amount, 0);
+
+                } else {
+                    destroy_hash_contract(calculate_hash_contract_address_wrapped(inputNullifier_0, my_address(), hash_contract_code), origin_sender, 5000000, 0);
+
+                    if (extAmount > 0) {
+                        amount = extAmount + protocol_fee_amount;
+                    }
+                    send_jetton(origin_sender, amount, jetton_wallet, 64);
+                }
+
+                return ();
+            }
+
+            (cell balance_sheet_new, int balance_new, int protoocol_fee_new) = update_balance_sheet(balanceSheet, asset_id, extAmount - fee, protocol_fee_amount);
+
+            stucks~udict_set(256, outputCommitment_0, begin_cell().store_uint(1, 4).store_uint(outputCommitment_0, 256).store_uint(outputCommitment_1, 256).end_cell().begin_parse());
+            emit_log_simple(op::transact, begin_cell().store_uint(2, 8).store_slice(nested_cs_copy).end_cell().begin_parse());
+
+
+            if (asset_id == 0) {
+
+                if (extAmount < 0) {
+                    send_ton(recipient, -1 * extAmount, 1);
+                }
+
+                raw_reserve(balance_new + const::min_storage, 0);
+                ;; this includes the relayer fee
+                send_ton(origin_sender, 0, 128);
+            } else {
+                if (extAmount < 0) {
+                    send_jetton(recipient, -1 * extAmount, jetton_wallet,1);
+                }
+                ;; send relayer the jetton fee plus remaining gas
+                send_jetton(origin_sender, fee, jetton_wallet, 64);
+            }
+
+            save_data(merkle, hash_contract_code, stucks, admin, balance_sheet_new, asset_config);
+
+            return ();
+
+        }
+
+    }
+
+
+
+
+    throw(0xffff); ;; if the message contains an op that is not known to this contract, we throw
+}
+
+
+(int) check_remove_stuck(slice in_msg_body) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+
+    in_msg_body~load_uint(32 + 64);
+    int batch_depth = in_msg_body~load_uint(8);
+    ;; 5 or 4 or 3 depth supported
+    cell stuck_list = in_msg_body~load_dict();
+
+    (tuple commitment_list, stucks) = validate_dict_stuck(stuck_list, stucks, 1 << batch_depth);
+
+    insert_check(merkle, in_msg_body, batch_depth, commitment_list);
+
+    return true;
+}
+
+(int, slice, slice) check_transact(slice nested_cs, int amount, int asset_id) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+
+    ;; set fee_per_thousand, max_protocol_fee_asset based on asset_id
+    nested_cs = nested_cs~load_ref().begin_parse();
+
+    int min_deposit = 0;
+    int fee_per_thousand = 0;
+    int max_protocol_fee_asset = 0;
+    if (asset_id == 0) {
+        (slice config) = get_ton_config(asset_config);
+        (min_deposit, fee_per_thousand, max_protocol_fee_asset) = load_config(config);
+    } else {
+        (slice config, slice jetton_wallet) = get_jetton_config(asset_id, asset_config);
+        (min_deposit, fee_per_thousand, max_protocol_fee_asset) = load_config(config);
+    }
+
+    int root = nested_cs~load_uint(256);
+
+    throw_unless(error::field_root_transact, root < FIELD_SIZE);
+    throw_unless(error::known_root, is_known_root(root, merkle));
+
+
+
+
+    int inputNullifier_0 = nested_cs~load_uint(256);
+    int inputNullifier_1 = nested_cs~load_uint(256);
+    throw_unless(error::field_nullifier_hash_0_transact, inputNullifier_0 < FIELD_SIZE);
+    throw_unless(error::field_nullifier_hash_1_transact, inputNullifier_1 < FIELD_SIZE);
+    slice remaining_ds = nested_cs~load_ref().begin_parse();
+    slice proof_cell = nested_cs~load_ref().begin_parse();
+
+    int outputCommitment_0 = remaining_ds~load_uint(256);
+    int outputCommitment_1 = remaining_ds~load_uint(256);
+    slice ext_data_cell = remaining_ds~load_ref().begin_parse();
+    int ext_data_hash = ext_data_cell.slice_hash() % FIELD_SIZE;
+    int fee = ext_data_cell~load_uint(64);
+    int extAmount = ext_data_cell~load_int(248);
+    int protocol_fee_amount = 0;
+    if (extAmount > 0) {
+        protocol_fee_amount = calculate_protocol_fee(extAmount, fee_per_thousand, max_protocol_fee_asset);
+    }
+
+
+    if (extAmount > 0) {
+        if (asset_id == 0) {
+            throw_unless(error::fund_transact_ton_enough,
+                extAmount + const::tx_fee_transact_ton + protocol_fee_amount <= amount);
+        } else {
+            throw_unless(error::fund_transact_jetton_enough, extAmount + protocol_fee_amount <= amount);
+        }
+    }
+    ext_data_cell~load_msg_addr();
+
+    int public_amount = calculatePublicAmount(extAmount, fee);
+
+
+
+
+    int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, asset_id, proof_cell);
+
+
+    ifnot (success) {
+        throw(error::invalid_proof_transact);
+    }
+
+
+    return (
+        true,
+        calculate_hash_contract_address(calculate_hash_contract_state_init(inputNullifier_0, my_address(), hash_contract_code)),
+        calculate_hash_contract_address(calculate_hash_contract_state_init(inputNullifier_1, my_address(), hash_contract_code))
+    );
+}
+
+(int) get_last_root() method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+    (int root, _) = get_last_root_handler(merkle);
+    return root;
+}
+
+(cell) get_stuck() method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+    return stucks;
+}
+
+(int) get_root_known(int root) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+    return is_known_root(root, merkle);
+}
+
+(int, int) get_tvl(int asset_id) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+    (slice asset, int found) = balanceSheet.udict_get?(256, asset_id);
+    int balance = 0;
+    int protocol_fee = 0;
+    if (found) {
+        balance = asset~load_coins();
+        protocol_fee = asset~load_coins();
+    }
+    return (balance, protocol_fee);
+
+}
+
+(int) get_protocol_fee(int deposit_amount, int asset_id) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+    ;; set fee_per_thousand, max_protocol_fee_asset based on asset_id
+    int min_deposit = 0;
+    int fee_per_thousand = 0;
+    int max_protocol_fee_asset = 0;
+    if (asset_id == 0) {
+        (slice config) = get_ton_config(asset_config);
+        (min_deposit, fee_per_thousand, max_protocol_fee_asset) = load_config(config);
+    } else {
+        (slice config, slice jetton_wallet) = get_jetton_config(asset_id, asset_config);
+        (min_deposit, fee_per_thousand, max_protocol_fee_asset) = load_config(config);
+    }
+    return calculate_protocol_fee(deposit_amount, fee_per_thousand, max_protocol_fee_asset);
+}
+
+(slice) get_hash_contract(int hash) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+    cell hash_contract_state_init = calculate_hash_contract_state_init(hash, my_address(), hash_contract_code);
+    slice hash_contract_address = calculate_hash_contract_address(hash_contract_state_init);
+
+    return hash_contract_address;
+}
+

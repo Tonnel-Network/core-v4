@@ -2,6 +2,8 @@ import crypto from "crypto";
 // @ts-ignore
 import { groth16 } from "snarkjs";
 import {beginCell} from "@ton/core";
+import { BigNumber } from 'ethers';
+import jsSHA from 'jssha';
 
 /** Generate random buffer of specified byte length */
 const rbuffer = (nbytes: number) => crypto.randomBytes(nbytes);
@@ -105,4 +107,35 @@ export function parseG2Func(num0: any, num1: any, ys:any) {
   return cell.endCell()
 
 }
-export { genProofArgs, unstringifyBigInts, toBigIntLE, rbuffer, groth16};
+const toBuffer = (value: any, length: number) =>
+    Buffer.from(
+        BigNumber.from(value)
+            .toHexString()
+            .slice(2)
+            .padStart(length * 2, '0'),
+        'hex',
+    )
+
+function hashInputs(input: {
+  oldRoot: any;
+  newRoot: any;
+  pathIndices: any;
+  leaves: any[];
+}) {
+  const sha = new jsSHA('SHA-256', 'ARRAYBUFFER')
+  sha.update(toBuffer(input.oldRoot, 32))
+  sha.update(toBuffer(input.newRoot, 32))
+  sha.update(toBuffer(input.pathIndices, 4))
+
+  for (let i = 0; i < input.leaves.length; i++) {
+    sha.update(toBuffer(input.leaves[i], 32))
+  }
+  const hash = '0x' + sha.getHash('HEX')
+  const result = BigNumber.from(hash)
+      .mod(BigNumber.from('52435875175126190479447740508185965837690552500527637822603658699938581184513'))
+      .toString()
+  return result
+}
+
+
+export { genProofArgs, unstringifyBigInts, toBigIntLE, rbuffer, groth16, hashInputs, toBuffer};
