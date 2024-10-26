@@ -27,6 +27,9 @@ export const mimcHash3 = (a: any, b: any, c: any) =>
     (mimcsponge.multiHash([BigInt(a), BigInt(b), BigInt(c)]).toString())
 
 
+export const mimcHash4 = (a: any, b: any, c: any, d: any) =>
+    (mimcsponge.multiHash([BigInt(a), BigInt(b), BigInt(c), BigInt(d)]).toString())
+
 export const CellRef: DictionaryValue<Cell> = {
   serialize: (src, builder) => {
     builder.storeSlice(src.beginParse())

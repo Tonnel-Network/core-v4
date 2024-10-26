@@ -1,16 +1,18 @@
-(int) check_proof_for_insert2(int old_root, int new_root, int commitment, int pathIndices, int deposit_amount, slice insert_proof) impure inline {
+(int) check_proof_for_insert2(int old_root, int new_root, int commitment, int pathIndices, int deposit_amount, int asset_id, slice insert_proof) impure inline {
     ;; This function checks the proof for insert operation in the Merkle tree when depositing funds [commitment, ZERO_VALUE]
 
-    slice IC0 = "a0590d1d4b7e17f4ebb612b236fb611f1f61f4ca9255f7fce32f2b45f9f34e951ecc855fa108fc6459b770ed6bf47b06"s;
-    slice IC1 = "942b4663cfeee6e285b08588f8a3bc05d014f1128d1e94de24976d46bdbfa72d840ea8b76a4bf697fa952ccf60115006"s;
-    slice IC2 = "a33c7718136330dd08a26671449de7c97bbcd49716e876c64f986f8f6ff33a70393a33ecfe05c8b6a6b9a8f77fe023de"s;
-    slice IC3 = "a07e2cd2753e63996df3c7a1c14a80a23aaae894f800321d4276950db6d421042e927dba117c2e04b4ac21565f38228e"s;
-    slice IC4 = "99df6b2c3d418dc770821a3b308673a8248903d60b974600f7b8d3a97ee1e19716751ef597b55007c9410d4246a3fa53"s;
-    slice IC5 = "a19de982446dabceda663b95aa9de41f1f3079af57d2669e35fd6d308b5010c136d507fcbb3df917bf9525917e4272f8"s;
-    slice IC6 = "88b51be04fde8d27f6b687fae49bec9d4075ff8603f68b7e372cdd8632677aee6ae4db9801d55c65adf6824d6a12ffbd"s;
+
+    slice IC0 = "b902ed0b5168ec45836f7624551c773b2aa4d3ce19f56238b2a7c128e5707807503be239397a5d5b418ab11927032638"s;
+    slice IC1 = "b315298449ac1ac79ae0cbfea692a37c2fa6e4888a116f17e4bb02f4a8b6aa9a361bb8e71ddae57288228a80c3e83fd3"s;
+    slice IC2 = "b2638f08f82c2c3bd75bdcff37040d08f5d6de929ab0bfff70e9513118e5ae8e2923e4b350a64fa7b59d73207b3ef46d"s;
+    slice IC3 = "b4f720213dff890850f6ad49427dfbb6fe3d37c619065f89c0253fbf45f13d275d400849a77a57de6511287db5ec013d"s;
+    slice IC4 = "891529b27a6c05e0bc4485865cb8d9f8efa2f71d2209b7624e0bbdbca9d2346a51763fa60d46ebf5cfb27b540db3968d"s;
+    slice IC5 = "8dc704ce88a30520d5e05d8f402c818d55b04d215412beb80f3d2600719fe4e82dde2928e1b56f32c9cd6cb4aca23f20"s;
+    slice IC6 = "9126c609ec3efd6f94181007ee323d1553a0e094923c9d03e2f27e3ffdef5924ba2c882aacc3778ff9dc30e0d8f38fae"s;
+    slice IC7 = "8d4283475bdcd8f95b325702b6a8575c879b95264087c33fb105637d6719a10782703b8fc5b952ee449a0ce75c4d3d93"s;
 
     slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
-    slice delta2 = "b259eaefa4fad6b1cd925c6cf7c0aa82559ea28e871198e60628e596264f9b2fa82badbcd37d610cfac59de53d7ad1d807335af6836cf13286e91c237f929cd7fa3d8a50973917bf9ed9dff90273b9aeda93489e56a5dc621902a0ce12a2b82d"s;
+    slice delta2 = "a61a49d0dd1b3289c2c29846c9666ca805a434078e3a0503ebc14bef57d949c907f254885ee27152ecbdbe425e94cc8304de7e8793ecf4360a9e8ceb46e61cc8918e1b1efdd69c989742074b4e4e41227659d2fab691a274b0ebeffde670a5cb"s;
     slice alf1 = "ac7d702040f8605838e8a33df1d873128a5a8af3874e0a32e08fc56b35c143c94b73d5284de0efee6494e2f70fe8ac40"s;
     slice beta2 = "ad621c5feb3a525f0a20a834fea9eb8b2009bcd77075f1c8fa8a7da0c4e2b4adeb388840c1eb739a4f3f4956f7de6f2e145d4681628e7a756eb9338645ddda256f061baa5a5aef1d15e7a309d4b968bb7d636fe2b108c91de4d24bd1aadc2c84"s;
 
@@ -28,6 +30,7 @@
     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC4, ZERO_VALUE));
     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC5, pathIndices));
     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC6, deposit_amount));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC7, asset_id));
 
     slice neg_a = bls_g1_negate(A);
 
@@ -45,16 +48,17 @@
 
 
 
-(int) check_proof_for_deposit(int commitment, int deposit_amount, slice deposit_proof) impure inline {
+(int) check_proof_for_deposit(int commitment, int deposit_amount, int asset_id, slice deposit_proof) impure inline {
     ;; This function checks the proof for commitment matches the claimed deposit amount
     ;; Maybe replacing it with MiMc hash function in contract would be better
 
-    slice IC0 = "b9c6ad838d38f3c3d0d303f49548341e3f798a427c840d5d4e54be59d506738b6e6e978657f8ead6e13c76d417d56686"s;
-    slice IC1 = "81d39df7f3ac107f3f5fd10b63d006a4a287ee07ae6db498bbaeff2a43c13444cc64d608c89f9091c7c88831e42f4046"s;
-    slice IC2 = "b078718aaf087ce8148fbe7eba02b444a123a9bd2ef91cde03fb6d21e3e59785e8d6a8dac0b7cd448a89a65a1a63589a"s;
+    slice IC0 = "821d89916a8cdd3b613fd0ac60cf675574d9dc3aaedfdf8a666c4c7c8c4aee05beddbd93eb53607b151718cc52160381"s;
+    slice IC1 = "aa3c84922dfaca82380149fa19a714dfb5d812bc5ea6ac12bcba1b44c07fd3ce286d3bffcf3b28b0c3790d14dc01239b"s;
+    slice IC2 = "b76bd88d889d5f287f4eae86815b07869bd024ddfa127d41a67303ef646092b5c918b3246cd96f5f1a35d9654405c5ea"s;
+    slice IC3 = "8ca4c262510086dd09f8f82ebadafb897668e3064f79729581e25b8c2b87844aca66b8c10e31af143685e4fe56994736"s;
 
     slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
-    slice delta2 = "a474b84df09e6fc03710633925f6602591380ea87fa54cef50565aa685f14b52c56fbcbe0ad3a6cc50ed2eecd4ffdf2810290b29439a7b102717bb6819785280a043d1d56fe1c643e0b5293b2a9def6ec2a0684e9e26a7772d41dbe6577b72ff"s;
+    slice delta2 = "8963c3971ec66f1178071ade40c6a76bfd694519a2778dc826aeafb742dc3d22f8aca42fae7f9c6c966193aa6f32199e157d4792a3681c1ed0e5e646654245e0aa0b8081eaa62fb597fbaab6fb511851b948546e54f0cb305f7c8be9584dbce6"s;
     slice alf1 = "86eb9de1fae7b540e09c26303cee8b99784835d37bf46f3fb1db25b7b063d9ab9aa866e79f7cc4eb209224c8465b9bde"s;
     slice beta2 = "9091cd3cdc8abaa367a61d5e094dc91ceec4a831f9c995e0b6d38cff4a9cf897a6bb7cc6d1fbb54068bbd8bb479e56d5010417ac1b215ac661897a156c587791a9cc20dffd3d60009696a749136c6b874f8f7a6c2e951843ef410ee953d0354c"s;
 
@@ -68,6 +72,7 @@
 
     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, deposit_amount));
     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC2, commitment));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC3, asset_id));
 
     slice neg_a = bls_g1_negate(A);
 
@@ -138,19 +143,21 @@
 
 
 
-(int) check_proof_for_transact(int root, int public_amount, int ext_data_hash, int inputNullifier_0, int inputNullifier_1, int outputCommitment_0, int outputCommitment_1, slice proof_cell) impure inline {
+(int) check_proof_for_transact(int root, int public_amount, int ext_data_hash, int inputNullifier_0, int inputNullifier_1, int outputCommitment_0, int outputCommitment_1, int asset_id, slice proof_cell) impure inline {
     ;; This function checks the proof for transact operation
-    slice IC0 = "9945677067d04e9580ea171a1fd90c603a05ffcb035fc281d7e531d54a5f2cc7776a16aa3b1ecc1790c1b19b49c1d039"s;
-    slice IC1 = "804226712177962af9d3a336f758a1de219927cf0dfec60aeaee1b4f3ac7c8dbed056879794a157f02c4acfe4bece459"s;
-    slice IC2 = "85ee04f90e74da989a9f08c7108f880c9905ac4a2e8db816215eb5bcf7a628e468f8b2e1ddd58fbfe6c9eeb51d5e512d"s;
-    slice IC3 = "818cf7dd0b851a3c9d3e651ea72b1440e5e1192f00028048b2d2991447dc2c7790cdff914dbeea0fb7d4e32a6ddd0e48"s;
-    slice IC4 = "b0347a19fc3f0f1a460ad45470fbe24701df893fec3902a9e677e96027972833a8fe591b745c8d02e7514d574ac03844"s;
-    slice IC5 = "a5b39f216568118429dd651836de3d8663e4f36273b14652282157802c35fd1190ef0ff56ae67aa60b4c2c1ea44e84a5"s;
-    slice IC6 = "a7dfaac4f604325d7c113c52129ee9c6e6fef9490e9964119a884c31021299a26a76c0b1ca11bafdee2e69c94a860196"s;
-    slice IC7 = "a23cd821fb7167b307ca3b0bbc9e639151b2388951cd7c38d98dbe9c9eecdfba60acc1f2ee1adea3831a32f392171146"s;
+
+    slice IC0 = "b45f060f41a127e2ae79822cf9b9702d089e1e6e27036de844345ce049d763804214451209ae736531e89e1ba0a48b7a"s;
+    slice IC1 = "ac8cb2b53b97ac7819818ed51b6b03c937dd9a7185ab450dfc21e2ee20e46b4025236736008ea859b1b501d74452c778"s;
+    slice IC2 = "88d9afccf6bc9584311633bbfb6df429703a2777eca6ce491bbed875cf362f33d286d6b359441d7f774e5837fb0ed61d"s;
+    slice IC3 = "ae5598f10218b3d3bbf27b993d46d51f3b84c5881e3e5979b64b934c9dfa2fa9a054d96320072b21ad54e37e86b8742f"s;
+    slice IC4 = "91faa383813586b41fec29282900c9f6880ff769c7ce5fe2e241fd43aa5dd92d2b95e08d6b00ceb31384a134cf460101"s;
+    slice IC5 = "b3f66872cb248c94cdd80d0fa37b0152b865c4c85a8687db0b4c7a7acff0d639442fc429038acc97d7f6388c3a3e68fe"s;
+    slice IC6 = "a6ee6631e341985f6313c8685667e8ea364ca3601bbbae87d405542677c446af23be2ff93349228911bda2e0ac479945"s;
+    slice IC7 = "a521f0e9194acf231941ec799535c2ce7aa777bfbb81ffc43ffba26c3a9348ecca9455d75f19365c41c50979244881fa"s;
+    slice IC8 = "975514a3ac0694d6bd397b9db184e5351ee3d79943ed2d0e661d53bfcc2558866a068a70a3555a4b9304bd52595d8235"s;
 
     slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
-    slice delta2 = "a844ace9da2c9a376718891b978b1ab9414adb794d6f470cfa9b3826b673dc6b5dd2bf03741149ddf01d55d7e283f7610973514d4c74cf404829af4a736be3ed491d976319eb1b802b902bb9b2d0aca0d83a8e1098ce81b0717569f9a9a70ee7"s;
+    slice delta2 = "a92c408c1619b899816ad787a8a3ce166f00745e13a78b60b5b08f63100bc56566a76ed57b5cb0993a4556c510be8e570b2c0208ae729386b653eebd78a4109c53f1db401352a5d00203debb9b64c8d5a219bb967421b3db404eec2a81eb5fb6"s;
     slice alf1 = "ac7d702040f8605838e8a33df1d873128a5a8af3874e0a32e08fc56b35c143c94b73d5284de0efee6494e2f70fe8ac40"s;
     slice beta2 = "ad621c5feb3a525f0a20a834fea9eb8b2009bcd77075f1c8fa8a7da0c4e2b4adeb388840c1eb739a4f3f4956f7de6f2e145d4681628e7a756eb9338645ddda256f061baa5a5aef1d15e7a309d4b968bb7d636fe2b108c91de4d24bd1aadc2c84"s;
 
@@ -168,8 +175,9 @@
     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC3, ext_data_hash));
     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC4, inputNullifier_0));
     vk_x = bls_g1_add(vk_x, bls_g1_mul(IC5, inputNullifier_1));
-    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC6, outputCommitment_0));
-    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC7, outputCommitment_1));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC6, asset_id));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC7, outputCommitment_0));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC8, outputCommitment_1));
 
 
 

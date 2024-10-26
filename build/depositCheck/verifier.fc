@@ -6,12 +6,13 @@ const int P2_SIZE = 96 * 8;
 
 
 
-const slice IC0 = "b9c6ad838d38f3c3d0d303f49548341e3f798a427c840d5d4e54be59d506738b6e6e978657f8ead6e13c76d417d56686"s;
-const slice IC1 = "81d39df7f3ac107f3f5fd10b63d006a4a287ee07ae6db498bbaeff2a43c13444cc64d608c89f9091c7c88831e42f4046"s;
-const slice IC2 = "b078718aaf087ce8148fbe7eba02b444a123a9bd2ef91cde03fb6d21e3e59785e8d6a8dac0b7cd448a89a65a1a63589a"s;
+const slice IC0 = "821d89916a8cdd3b613fd0ac60cf675574d9dc3aaedfdf8a666c4c7c8c4aee05beddbd93eb53607b151718cc52160381"s;
+const slice IC1 = "aa3c84922dfaca82380149fa19a714dfb5d812bc5ea6ac12bcba1b44c07fd3ce286d3bffcf3b28b0c3790d14dc01239b"s;
+const slice IC2 = "b76bd88d889d5f287f4eae86815b07869bd024ddfa127d41a67303ef646092b5c918b3246cd96f5f1a35d9654405c5ea"s;
+const slice IC3 = "8ca4c262510086dd09f8f82ebadafb897668e3064f79729581e25b8c2b87844aca66b8c10e31af143685e4fe56994736"s;
 
 const slice vk_gamma_2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
-const slice vk_delta_2 = "a474b84df09e6fc03710633925f6602591380ea87fa54cef50565aa685f14b52c56fbcbe0ad3a6cc50ed2eecd4ffdf2810290b29439a7b102717bb6819785280a043d1d56fe1c643e0b5293b2a9def6ec2a0684e9e26a7772d41dbe6577b72ff"s;
+const slice vk_delta_2 = "8963c3971ec66f1178071ade40c6a76bfd694519a2778dc826aeafb742dc3d22f8aca42fae7f9c6c966193aa6f32199e157d4792a3681c1ed0e5e646654245e0aa0b8081eaa62fb597fbaab6fb511851b948546e54f0cb305f7c8be9584dbce6"s;
 const slice vk_alpha_1 = "86eb9de1fae7b540e09c26303cee8b99784835d37bf46f3fb1db25b7b063d9ab9aa866e79f7cc4eb209224c8465b9bde"s;
 const slice vk_beta_2 = "9091cd3cdc8abaa367a61d5e094dc91ceec4a831f9c995e0b6d38cff4a9cf897a6bb7cc6d1fbb54068bbd8bb479e56d5010417ac1b215ac661897a156c587791a9cc20dffd3d60009696a749136c6b874f8f7a6c2e951843ef410ee953d0354c"s;
 
@@ -22,6 +23,8 @@ slice bls_g1_multiexp(
     slice x1, int y1,
     
     slice x2, int y2,
+    
+    slice x3, int y3,
     
     int n
 ) asm "BLS_G1_MULTIEXP";
@@ -79,7 +82,9 @@ global int ctx_res;
     
     int pubInput0 ,
     
-    int pubInput1 
+    int pubInput1 ,
+    
+    int pubInput2 
     
 ) impure {
 
@@ -89,7 +94,9 @@ global int ctx_res;
         
         IC2, pubInput1,
         
-        2
+        IC3, pubInput2,
+        
+        3
     );
 
 
@@ -138,6 +145,8 @@ global int ctx_res;
         
         int pubInput1 = in_msg_body~load_newint();
         
+        int pubInput2 = in_msg_body~load_newint();
+        
 
         groth16Verify(
             pi_a,
@@ -146,7 +155,9 @@ global int ctx_res;
             
             pubInput0 ,
             
-            pubInput1 
+            pubInput1 ,
+            
+            pubInput2 
             
         );
         return ();

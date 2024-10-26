@@ -1,5 +1,5 @@
 const { Keypair } = require('./keypair')
-const {mimcHash3} = require("./merkleTree");
+const {mimcHash3, mimcHash4} = require("./merkleTree");
 const {BigNumber} = require("ethers");
 const {rbuffer, toBigIntLE} = require("./circuit");
 const toBuffer = (value, length) =>
@@ -18,14 +18,16 @@ class Utxo {
    *
    * @param { BigInt | number | string} amount UTXO amount
    * @param { BigInt | number | string} blinding Blinding factor
+   * @param { BigInt | number | string} asset_id asset_id
    * @param {Keypair} keypair
    * @param {number|null} index UTXO index in the merkle tree
    */
-  constructor({ amount = 0, keypair = new Keypair(), blinding = randomBN(), index = null } = {}) {
+  constructor({ amount = 0, keypair = new Keypair(), blinding = randomBN(), index = null , asset_id = 0n} = {}) {
     this.amount = BigInt(amount)
     this.blinding = BigInt(blinding)
     this.keypair = keypair
     this.index = index
+    this.asset_id = asset_id
   }
 
   /**
@@ -35,7 +37,7 @@ class Utxo {
    */
   getCommitment() {
     if (!this._commitment) {
-      this._commitment = mimcHash3(this.amount, this.keypair.pubkey, this.blinding)
+      this._commitment = mimcHash4(this.amount, this.keypair.pubkey, this.blinding, this.asset_id)
     }
     return this._commitment
   }

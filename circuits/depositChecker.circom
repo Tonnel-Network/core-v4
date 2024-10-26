@@ -7,14 +7,16 @@ include "./merkleTree.circom";
 template DepositChecker() {
     signal input depositAmount;
     signal input leaf;
+    signal input asset_id;
 
     signal private input publicKey;
     signal private input binding;
 
-    component inCommitmentHasher = HashCustom(3);
+    component inCommitmentHasher = HashCustom(4);
     inCommitmentHasher.in[0] <== depositAmount;
     inCommitmentHasher.in[1] <== publicKey;
     inCommitmentHasher.in[2] <== binding;
+    inCommitmentHasher.in[3] <== asset_id;
     leaf === inCommitmentHasher.hash;
 }
 

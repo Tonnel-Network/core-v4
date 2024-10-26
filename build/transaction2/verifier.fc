@@ -6,17 +6,18 @@ const int P2_SIZE = 96 * 8;
 
 
 
-const slice IC0 = "9945677067d04e9580ea171a1fd90c603a05ffcb035fc281d7e531d54a5f2cc7776a16aa3b1ecc1790c1b19b49c1d039"s;
-const slice IC1 = "804226712177962af9d3a336f758a1de219927cf0dfec60aeaee1b4f3ac7c8dbed056879794a157f02c4acfe4bece459"s;
-const slice IC2 = "85ee04f90e74da989a9f08c7108f880c9905ac4a2e8db816215eb5bcf7a628e468f8b2e1ddd58fbfe6c9eeb51d5e512d"s;
-const slice IC3 = "818cf7dd0b851a3c9d3e651ea72b1440e5e1192f00028048b2d2991447dc2c7790cdff914dbeea0fb7d4e32a6ddd0e48"s;
-const slice IC4 = "b0347a19fc3f0f1a460ad45470fbe24701df893fec3902a9e677e96027972833a8fe591b745c8d02e7514d574ac03844"s;
-const slice IC5 = "a5b39f216568118429dd651836de3d8663e4f36273b14652282157802c35fd1190ef0ff56ae67aa60b4c2c1ea44e84a5"s;
-const slice IC6 = "a7dfaac4f604325d7c113c52129ee9c6e6fef9490e9964119a884c31021299a26a76c0b1ca11bafdee2e69c94a860196"s;
-const slice IC7 = "a23cd821fb7167b307ca3b0bbc9e639151b2388951cd7c38d98dbe9c9eecdfba60acc1f2ee1adea3831a32f392171146"s;
+const slice IC0 = "b45f060f41a127e2ae79822cf9b9702d089e1e6e27036de844345ce049d763804214451209ae736531e89e1ba0a48b7a"s;
+const slice IC1 = "ac8cb2b53b97ac7819818ed51b6b03c937dd9a7185ab450dfc21e2ee20e46b4025236736008ea859b1b501d74452c778"s;
+const slice IC2 = "88d9afccf6bc9584311633bbfb6df429703a2777eca6ce491bbed875cf362f33d286d6b359441d7f774e5837fb0ed61d"s;
+const slice IC3 = "ae5598f10218b3d3bbf27b993d46d51f3b84c5881e3e5979b64b934c9dfa2fa9a054d96320072b21ad54e37e86b8742f"s;
+const slice IC4 = "91faa383813586b41fec29282900c9f6880ff769c7ce5fe2e241fd43aa5dd92d2b95e08d6b00ceb31384a134cf460101"s;
+const slice IC5 = "b3f66872cb248c94cdd80d0fa37b0152b865c4c85a8687db0b4c7a7acff0d639442fc429038acc97d7f6388c3a3e68fe"s;
+const slice IC6 = "a6ee6631e341985f6313c8685667e8ea364ca3601bbbae87d405542677c446af23be2ff93349228911bda2e0ac479945"s;
+const slice IC7 = "a521f0e9194acf231941ec799535c2ce7aa777bfbb81ffc43ffba26c3a9348ecca9455d75f19365c41c50979244881fa"s;
+const slice IC8 = "975514a3ac0694d6bd397b9db184e5351ee3d79943ed2d0e661d53bfcc2558866a068a70a3555a4b9304bd52595d8235"s;
 
 const slice vk_gamma_2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
-const slice vk_delta_2 = "a844ace9da2c9a376718891b978b1ab9414adb794d6f470cfa9b3826b673dc6b5dd2bf03741149ddf01d55d7e283f7610973514d4c74cf404829af4a736be3ed491d976319eb1b802b902bb9b2d0aca0d83a8e1098ce81b0717569f9a9a70ee7"s;
+const slice vk_delta_2 = "a92c408c1619b899816ad787a8a3ce166f00745e13a78b60b5b08f63100bc56566a76ed57b5cb0993a4556c510be8e570b2c0208ae729386b653eebd78a4109c53f1db401352a5d00203debb9b64c8d5a219bb967421b3db404eec2a81eb5fb6"s;
 const slice vk_alpha_1 = "ac7d702040f8605838e8a33df1d873128a5a8af3874e0a32e08fc56b35c143c94b73d5284de0efee6494e2f70fe8ac40"s;
 const slice vk_beta_2 = "ad621c5feb3a525f0a20a834fea9eb8b2009bcd77075f1c8fa8a7da0c4e2b4adeb388840c1eb739a4f3f4956f7de6f2e145d4681628e7a756eb9338645ddda256f061baa5a5aef1d15e7a309d4b968bb7d636fe2b108c91de4d24bd1aadc2c84"s;
 
@@ -37,6 +38,8 @@ slice bls_g1_multiexp(
     slice x6, int y6,
     
     slice x7, int y7,
+    
+    slice x8, int y8,
     
     int n
 ) asm "BLS_G1_MULTIEXP";
@@ -104,7 +107,9 @@ global int ctx_res;
     
     int pubInput5 ,
     
-    int pubInput6 
+    int pubInput6 ,
+    
+    int pubInput7 
     
 ) impure {
 
@@ -124,7 +129,9 @@ global int ctx_res;
         
         IC7, pubInput6,
         
-        7
+        IC8, pubInput7,
+        
+        8
     );
 
 
@@ -183,6 +190,8 @@ global int ctx_res;
         
         int pubInput6 = in_msg_body~load_newint();
         
+        int pubInput7 = in_msg_body~load_newint();
+        
 
         groth16Verify(
             pi_a,
@@ -201,7 +210,9 @@ global int ctx_res;
             
             pubInput5 ,
             
-            pubInput6 
+            pubInput6 ,
+            
+            pubInput7 
             
         );
         return ();

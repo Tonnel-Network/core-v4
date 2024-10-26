@@ -123,7 +123,8 @@ describe('Tonnel', () => {
 			depositAmount: BigInt(deposit_utxo.amount).toString(),
 			pathElements: pathElements.slice(1),
 			publicKey: deposit_utxo.keypair.pubkey,
-			binding: deposit_utxo.blinding.toString()
+			binding: deposit_utxo.blinding.toString(),
+			asset_id: 0
 		}
 
 		let {proof, publicSignals} = await groth16.fullProve(input,
@@ -140,7 +141,8 @@ describe('Tonnel', () => {
 			depositAmount: BigInt(deposit_utxo.amount).toString(),
 			leaf: deposit_utxo.getCommitment(),
 			publicKey: deposit_utxo.keypair.pubkey,
-			binding: deposit_utxo.blinding.toString()
+			binding: deposit_utxo.blinding.toString(),
+			asset_id: 0
 		}
 		let {proof: proof2, publicSignals: publicSignals2} = await groth16.fullProve(input2,
 			wasmPathTreeDepositHash, zkeyPathTreeDepositHash);
@@ -319,6 +321,7 @@ describe('Tonnel', () => {
 			inAmount: inputs.map((x) => x.amount),
 			inPrivateKey: inputs.map((x) => BigInt(x.keypair.privkey)),
 			inBlinding: inputs.map((x) => x.blinding),
+			asset_id: 0,
 			inPathIndices: inputMerklePathIndices,
 			inPathElements: inputMerklePathElements,
 

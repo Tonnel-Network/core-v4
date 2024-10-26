@@ -182,7 +182,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
             int check = false;
             if (given_old_root == old_root) {
                 try {
-                    check = check_proof_for_insert2(old_root, new_root, commitment_value, last_index / 2, deposit_amount, proof_insert);
+                    check = check_proof_for_insert2(old_root, new_root, commitment_value, last_index / 2, deposit_amount, 0, proof_insert);
                 } catch (_, _) {
                     check = false;
                 }
@@ -191,7 +191,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
                 ;; check_proof_for_deposit so we assure that the commitment is valid
                 ~dump(commitment_value);
                 ~dump(deposit_amount);
-                check = check_proof_for_deposit(commitment_value, deposit_amount, proof_deposit);
+                check = check_proof_for_deposit(commitment_value, deposit_amount, 0, proof_deposit);
                 ~dump(check);
                 if (~ check) {
                     ~dump(111132);
@@ -259,7 +259,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
 
 
 
-            int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, proof_cell);
+            int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, 0, proof_cell);
 
             int protocol_fee_amount = calculate_protocol_fee(extAmount, fee_per_thousand);
 
@@ -379,7 +379,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
 
 
 
-    int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, proof_cell);
+    int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, 0, proof_cell);
 
 
     ifnot (success) {

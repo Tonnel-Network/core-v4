@@ -12,14 +12,16 @@ template MerkleTreeUpdater(levels, subtreeLevels, zeroSubtreeRoot) {
     signal input leaves[1 << subtreeLevels];
     signal input pathIndices;
     signal input depositAmount;
+    signal input asset_id;
     signal private input pathElements[remainingLevels];
     signal private input publicKey;
     signal private input binding;
 
-    component inCommitmentHasher = HashCustom(3);
+    component inCommitmentHasher = HashCustom(4);
     inCommitmentHasher.in[0] <== depositAmount;
     inCommitmentHasher.in[1] <== publicKey;
     inCommitmentHasher.in[2] <== binding;
+    inCommitmentHasher.in[3] <== asset_id;
     leaves[0] === inCommitmentHasher.hash;
 
     // calculate subtree root

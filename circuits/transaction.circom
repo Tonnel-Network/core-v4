@@ -7,9 +7,10 @@ Utxo structure:
     amount,
     pubkey,
     blinding, // random number
+    asset_id // 0 for TON and the rest is hash of jetton wallet of contract
 }
 
-commitment = hash(amount, pubKey, blinding)
+commitment = hash(amount, pubKey, blinding, asset_id)
 nullifier = hash(commitment, merklePath, sign(privKey, commitment, merklePath))
 */
 
@@ -24,6 +25,8 @@ template Transaction(levels, nIns, nOuts, zeroLeaf) {
 
     // data for transaction inputs
     signal         input inputNullifier[nIns];
+    signal         input asset_id;
+
     signal private input inAmount[nIns];
     signal private input inPrivateKey[nIns];
     signal private input inBlinding[nIns];
@@ -49,10 +52,11 @@ template Transaction(levels, nIns, nOuts, zeroLeaf) {
         inKeypair[tx] = Keypair();
         inKeypair[tx].privateKey <== inPrivateKey[tx];
 
-        inCommitmentHasher[tx] = HashCustom(3);
+        inCommitmentHasher[tx] = HashCustom(4);
         inCommitmentHasher[tx].in[0] <== inAmount[tx];
         inCommitmentHasher[tx].in[1] <== inKeypair[tx].publicKey;
         inCommitmentHasher[tx].in[2] <== inBlinding[tx];
+        inCommitmentHasher[tx].in[3] <== asset_id;
 
         inSignature[tx] = Signature();
         inSignature[tx].privateKey <== inPrivateKey[tx];
@@ -91,10 +95,11 @@ template Transaction(levels, nIns, nOuts, zeroLeaf) {
 
     // verify correctness of transaction outputs
     for (var tx = 0; tx < nOuts; tx++) {
-        outCommitmentHasher[tx] = HashCustom(3);
+        outCommitmentHasher[tx] = HashCustom(4);
         outCommitmentHasher[tx].in[0] <== outAmount[tx];
         outCommitmentHasher[tx].in[1] <== outPubkey[tx];
         outCommitmentHasher[tx].in[2] <== outBlinding[tx];
+        outCommitmentHasher[tx].in[3] <== asset_id;
         outCommitmentHasher[tx].hash === outputCommitment[tx];
 
         // Check that amount fits into 248 bits to prevent overflow
