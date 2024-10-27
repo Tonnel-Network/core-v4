@@ -6,6 +6,8 @@ const int op::transact = 0x777;
 const int op::remove_stuck = 0x111;
 const int op::change_config_asset = 0x666;
 const int op::change_code = 0x5443;
+const int op::claim_reserves = 0x222;
+const int op::claim_reserve = 0x223;
 
 ;; Jetton
 int op::transfer() asm "0xf8a7ea5 PUSHINT";
@@ -57,6 +59,8 @@ const int error::args_hash_match = 1034;
 const int error::field_args_hash = 1035;
 const int error::verify_insert_proof = 1036;
 const int error::access_denied = 1037;
+const int error::fund_claim_reserves_gas_enough = 1038;
+const int error::asset_id_not_found = 1039;
 
 
 ;; Tonnel consts

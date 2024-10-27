@@ -4,12 +4,11 @@ import {
     Cell,
     Contract,
     contractAddress,
-    ContractProvider, Dictionary,
+    ContractProvider,
+    Dictionary,
     Sender,
     SendMode
 } from '@ton/core';
-import { TupleItemSlice } from '@ton/core/dist/tuple/tuple';
-import { TonnelV3HashContract } from './TonnelV3HashContract';
 import { CellRef } from '../utils/merkleTree';
 
 export type TonnelJettonConfig = {
@@ -147,21 +146,45 @@ export class TonnelJettonV4 implements Contract {
     }
 
     async getTVL(provider: ContractProvider, asset_id = 0n) {
-        try {
-            const result = await provider.get('get_tvl', [
-                { type: 'int', value: asset_id }
-            ]);
-            return {
-                balance: result.stack.readBigNumber(),
-                reserve: result.stack.readBigNumber()
-            };
-        } catch (e) {
-            return {
-                balance: 0n,
-                reserve: 0n
-            };
-        }
 
+            try {
+                const result = await provider.get('get_tvl', [
+                    { type: 'int', value: asset_id }
+                ]);
+                return {
+                    balance: result.stack.readBigNumber(),
+                    reserve: result.stack.readBigNumber()
+                };
+            } catch (e) {
+                return {
+                    balance: 0n,
+                    reserve: 0n
+                };
+            }
+
+
+    }
+
+    async getBalanceSheetAll(provider: ContractProvider) {
+        const result = await provider.get('get_balance_sheet', []);
+
+        return result.stack.readCell().beginParse().loadDictDirect(
+            Dictionary.Keys.BigUint(256),
+            {
+                serialize: (src: {
+                    balance: bigint;
+                    reserve: bigint;
+                }, builder) => {
+                    builder.storeCoins(src.balance).storeCoins(src.reserve);
+                },
+                parse: (src) => {
+                    return {
+                        balance: src.loadCoins(),
+                        reserve: src.loadCoins()
+                    };
+                },
+            }
+        );
     }
 
     async getProtocolFee(provider: ContractProvider, deposit: bigint, asset_id = 0n) {

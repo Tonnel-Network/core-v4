@@ -151,6 +151,67 @@ const int const::min_storage = 500000000; ;;0.5 TON
         return ();
     }
 
+    if (op == op::claim_reserves){
+        int query_id = in_msg_body~load_uint(64);
+        int howmany = in_msg_body~load_uint(8);
+
+        throw_unless(error::access_denied, equal_slices(sender_address, admin));
+        throw_unless(error::fund_claim_reserves_gas_enough, howmany * const::tx_fee_send_jetton <= msg_value);
+        ;; get all the balancesheet and send them to the admin
+
+        (int asset_id, slice config, int found) = balanceSheet.udict_get_min?(256);
+        while ((found) & (howmany > 0)) {
+            int balance = config~load_coins();
+            int protocol_fee_amount = config~load_coins();
+            if (protocol_fee_amount > 0) {
+                if (asset_id == 0) {
+                    send_ton(admin, protocol_fee_amount, 0);
+                } else {
+                    ;; get config
+                    (_, slice jetton_wallet_address) = get_jetton_config(asset_id, asset_config);
+                    send_jetton(admin, protocol_fee_amount, jetton_wallet_address, 0);
+                }
+                balanceSheet~udict_set(256, asset_id, begin_cell().store_coins(balance).store_coins(0).end_cell().begin_parse());
+                howmany -= 1;
+            }
+            ;; set the protocol fee to zero
+
+
+
+            (asset_id, config, found) = balanceSheet.udict_get_next?(256, asset_id);
+        }
+
+        save_data(merkle, hash_contract_code, stucks, admin, balanceSheet, asset_config);
+        return ();
+    }
+
+    if (op == op::claim_reserve){
+        int query_id = in_msg_body~load_uint(64);
+        int asset_id = in_msg_body~load_uint(256);
+
+        throw_unless(error::access_denied, equal_slices(sender_address, admin));
+        throw_unless(error::fund_claim_reserves_gas_enough, const::tx_fee_send_jetton <= msg_value);
+        ;; get all the balancesheet and send them to the admin
+
+        (slice config, int found) = balanceSheet.udict_get?(256, asset_id);
+        throw_unless(error::asset_id_not_found, found);
+        int balance = config~load_coins();
+        int protocol_fee_amount = config~load_coins();
+        if (protocol_fee_amount > 0) {
+            if (asset_id == 0) {
+                send_ton(admin, protocol_fee_amount, 0);
+            } else {
+                ;; get config
+                (_, slice jetton_wallet_address) = get_jetton_config(asset_id, asset_config);
+                send_jetton(admin, protocol_fee_amount, jetton_wallet_address, 0);
+            }
+            balanceSheet~udict_set(256, asset_id, begin_cell().store_coins(balance).store_coins(0).end_cell().begin_parse());
+        }
+
+        save_data(merkle, hash_contract_code, stucks, admin, balanceSheet, asset_config);
+        return ();
+    }
+
     if (op == op::remove_stuck) {
         int query_id = in_msg_body~load_uint(64);
         int batch_depth = in_msg_body~load_uint(8);
@@ -616,6 +677,13 @@ const int const::min_storage = 500000000; ;;0.5 TON
         protocol_fee = asset~load_coins();
     }
     return (balance, protocol_fee);
+
+}
+
+(cell) get_balance_sheet() method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+
+    return (balanceSheet);
 
 }
 

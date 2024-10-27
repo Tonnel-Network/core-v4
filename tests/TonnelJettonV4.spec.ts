@@ -74,6 +74,12 @@ describe('Tonnel', () => {
     let codeJettonMaster: Cell;
     let codeJettonWallet: Cell;
 
+    let blockchain: Blockchain;
+    let tonnel: SandboxContract<TonnelJettonV4>;
+    let jettonMasters: SandboxContract<JettonMinter>[] = [];
+    let owner: SandboxContract<TreasuryContract>;
+    let _keypair: KeyPair;
+
     async function doDeposit(tree: MerkleTree, deposit_utxo: typeof Utxo, sender: SandboxContract<any>, which : number = 0, asset_id = 0n) {
         const rootInit = await tonnel.getLastRoot();
         expect(BigInt(tree.root)).toEqual(rootInit);
@@ -753,18 +759,93 @@ describe('Tonnel', () => {
 
     }
 
+
+    async function claimReserve(asset_id: bigint) {
+        if (asset_id < 0) {
+            // claim all reserves
+            const balanceSheetBefore = await tonnel.getBalanceSheetAll();
+            const balanceBefore = await tonnel.getBalance();
+            const jettonBalancesTonnelBefore = jettonMasters.map(async (master) => {
+                return await blockchain.openContract(JettonWallet.createFromAddress(
+                    await master.getWalletAddress(tonnel.address)
+                )).getBalanceJetton();
+            })
+            const jettonBalancesOwnerBefore = jettonMasters.map(async (master) => {
+                return await blockchain.openContract(JettonWallet.createFromAddress(
+                    await master.getWalletAddress(owner.address)
+                )).getBalanceJetton();
+            })
+            // wait for all jetton balances
+            await Promise.all(jettonBalancesTonnelBefore);
+            await Promise.all(jettonBalancesOwnerBefore);
+
+            const payload = beginCell()
+                .storeUint(0x222, 32)
+                .storeUint(0, 64)
+                .storeUint(10, 8)
+                .endCell();
+            const depositResult = await tonnel.sendInternal(owner.getSender(), {
+                value: toNano(1),
+                payload: payload
+            });
+            const balanceSheetAfter = await tonnel.getBalanceSheetAll();
+            const balanceAfter = await tonnel.getBalance();
+            const jettonBalancesTonnelAfter = jettonMasters.map(async (master) => {
+                return await blockchain.openContract(JettonWallet.createFromAddress(
+                    await master.getWalletAddress(tonnel.address)
+                )).getBalanceJetton();
+            })
+            const jettonBalancesOwnerAfter = jettonMasters.map(async (master) => {
+                return await blockchain.openContract(JettonWallet.createFromAddress(
+                    await master.getWalletAddress(owner.address)
+                )).getBalanceJetton();
+            })
+            // wait for all jetton balances
+            await Promise.all(jettonBalancesTonnelAfter);
+            await Promise.all(jettonBalancesOwnerAfter);
+
+            expect(depositResult.transactions).toHaveTransaction({
+                from: owner.address,
+                to: tonnel.address,
+                success: true
+            });
+            // iterate over all balances
+
+            balanceSheetAfter.values().forEach((value, key) => {
+                expect(value.reserve).toEqual(0n);
+                if (balanceSheetBefore.get(BigInt(key))?.balance)
+                    expect(value.balance).toEqual(balanceSheetBefore.get(BigInt(key))?.balance);
+            })
+
+            expect(balanceAfter).toBeGreaterThanOrEqual(balanceBefore - balanceSheetBefore.get(0n)!.reserve);
+
+            for (let i = 0; i < jettonBalancesTonnelAfter.length; i++) {
+                const asset_id = BigInt(toFixedHex(beginCell().storeAddress(JettonWallet.createFromAddress(
+                    await jettonMasters[i].getWalletAddress(tonnel.address)
+                ).address).endCell().hash()))
+                console.log('asset_id', asset_id, balanceSheetBefore.get(asset_id));
+                if (balanceSheetBefore.get(asset_id)?.reserve)
+                    expect(await jettonBalancesTonnelAfter[i]).toEqual((await jettonBalancesTonnelBefore[i]) - balanceSheetBefore.get(asset_id)!.reserve);
+
+            }
+
+            for (let i = 0; i < jettonBalancesOwnerAfter.length; i++) {
+                const asset_id = BigInt(toFixedHex(beginCell().storeAddress(JettonWallet.createFromAddress(
+                    await jettonMasters[i].getWalletAddress(tonnel.address)
+                ).address).endCell().hash()))
+
+                if (balanceSheetBefore.get(asset_id))
+                    expect(await jettonBalancesOwnerAfter[i]).toEqual((await jettonBalancesOwnerBefore[i]) + balanceSheetBefore.get(asset_id)!.reserve);
+
+            }
+        }
+    }
     beforeAll(async () => {
         code = await compile('TonnelJettonV4');
         codeHash = await compile('TonnelV3HashContract');
         codeJettonMaster = Cell.fromHex('b5ee9c7201021001000357000114ff00f4a413f4bcf2c80b0102016202030202cc04050201580c0d04f5d906380492f81f000e8698180b8d8492f81f07d207d2018fd0018b8eb90fd0018fd001801698fe99ff6a2687d007d206a6a7a0218400aa9405d718141083deecbef29405d71814108163b5cb9a9405d71811b1c1c28aae382f9702491e001c70c1999817d20182a90e42802fd012801e78b66667a0064f6aa7011c060708090093b5f0508806e0a84026a8280790a009f404b19e2c039e2d99924591960225e801e80196019241f200e0e9919605940f97ff93a0ef003191960ab19e2ca009f4042796d625999992e3f60100c8363637375346c705535301f901018307f40e6fa131c00091709171e2b1f82816c70515b1f2e049fa40fa00d43020d08060d721fa00308102c55371a082282386f26fc10000bbf2f42510345042f00a13a0044313c85005fa025003cf16ccccf400c9ed5401c637383802fa00fa40f82854120970542013541403c85004fa0258cf1601cf16ccc922c8cb0112f400f400cb00c9f9007074c8cb02ca07cbffc9d05007c705f2e04aa146345055c85005fa025003cf16ccccf400c9ed54fa403020d70b01c300915be30d0a01fc145f0433820898968015a015bcf2e04b02fa40d3003095c821cf16c9916de28210d1735400708018c8cb055005cf1624fa0214cb6a13cb1f14cb3f23fa443070ba8e33f828440370542013541403c85004fa0258cf1601cf16ccc922c8cb0112f400f400cb00c9f9007074c8cb02ca07cbffc9d0cf16966c227001cb01e20b00e4c0048e18333504d430403304c85005fa025003cf16ccccf400c9ed54e023c0058e2533fa403071c8cb00c9d001f901588307f416444013c85005fa025003cf16ccccf400c9ed54e003c0068e1efa4030f901018307f45b30444013c85005fa025003cf16ccccf400c9ed54e05f06840ff2f0003e8210d53276db708010c8cb055003cf1622fa0212cb6acb1fcb3fc98042fb00000ef400c98040fb000201660e0f0045b8717ed44d0fa00fa40d4d4f404306c4101f901018307f40e6fa131c00091709171e280083adbcf6a2687d007d206a6a7a02180a2f827c1400b82a1009aa0a01e428027d012c678b00e78b666491646580897a007a00658064fc80383a6465816503e5ffe4e8400025af16f6a2687d007d206a6a7a0218183faa9040');
         codeJettonWallet = Cell.fromHex('b5ee9c720102110100031f000114ff00f4a413f4bcf2c80b0102016202030202cc0405001ba0f605da89a1f401f481f481a8610201d40607020120080900bb0831c02497c138007434c0c05c6c2544d7c0fc03383e903e900c7e800c5c75c87e800c7e800c00b4c7e08403e29fa954882ea54c4d167c0278208405e3514654882ea58c511100fc02b80d60841657c1ef2ea4d67c02f817c12103fcbc2000113e910c1c2ebcb853600201200a0b0083d40106b90f6a2687d007d207d206a1802698fc1080bc6a28ca9105d41083deecbef09dd0958f97162e99f98fd001809d02811e428027d012c678b00e78b6664f6aa401f1503d33ffa00fa4021f001ed44d0fa00fa40fa40d4305136a1522ac705f2e2c128c2fff2e2c254344270542013541403c85004fa0258cf1601cf16ccc922c8cb0112f400f400cb00c920f9007074c8cb02ca07cbffc9d004fa40f40431fa0020d749c200f2e2c4778018c8cb055008cf1670fa0217cb6b13cc80c0201200d0e009e8210178d4519c8cb1f19cb3f5007fa0222cf165006cf1625fa025003cf16c95005cc2391729171e25008a813a08209c9c380a014bcf2e2c504c98040fb001023c85004fa0258cf1601cf16ccc9ed5402f73b51343e803e903e90350c0234cffe80145468017e903e9014d6f1c1551cdb5c150804d50500f214013e809633c58073c5b33248b232c044bd003d0032c0327e401c1d3232c0b281f2fff274140371c1472c7cb8b0c2be80146a2860822625a019ad822860822625a028062849e5c412440e0dd7c138c34975c2c0600f1000d73b51343e803e903e90350c01f4cffe803e900c145468549271c17cb8b049f0bffcb8b08160824c4b402805af3cb8b0e0841ef765f7b232c7c572cfd400fe8088b3c58073c5b25c60063232c14933c59c3e80b2dab33260103ec01004f214013e809633c58073c5b3327b552000705279a018a182107362d09cc8cb1f5230cb3f58fa025007cf165007cf16c9718010c8cb0524cf165006fa0215cb6a14ccc971fb0010241023007cc30023c200b08e218210d53276db708010c8cb055008cf165004fa0216cb6a12cb1f12cb3fc972fb0093356c21e203c85004fa0258cf1601cf16ccc9ed54');
     });
-
-    let blockchain: Blockchain;
-    let tonnel: SandboxContract<TonnelJettonV4>;
-    let jettonMasters: SandboxContract<JettonMinter>[] = [];
-    let owner: SandboxContract<TreasuryContract>;
-    let _keypair: KeyPair;
 
     beforeEach(async () => {
         blockchain = await Blockchain.create();
@@ -888,12 +969,13 @@ describe('Tonnel', () => {
 
 
         for (let i = 0; i < 5; i++) {
-
             const aliceDepositAmount = toNano(Math.floor(Math.random() * 1000) + 1); // random amount between 1 and 1000
             const utxo_random = new Utxo({ amount: aliceDepositAmount });
             arrayUtxo.push(utxo_random);
             await doDeposit(tree, utxo_random, sender);
         }
+
+        await claimReserve(-1n);
 
     }, 500000);
 
@@ -948,6 +1030,7 @@ describe('Tonnel', () => {
             arrayUtxo.push(utxo_random);
             await doDeposit(tree, utxo_random, sender);
         }
+        await claimReserve(-1n);
 
 
     }, 500000);
@@ -1430,6 +1513,7 @@ describe('Tonnel', () => {
         });
 
         await clearStucks(stuckDict, tree, sender, 8);
+        await claimReserve(-1n);
 
     }, 500000);
 
