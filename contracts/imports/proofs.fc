@@ -193,3 +193,46 @@
         4);
 }
 
+
+(int) check_proof_for_insert_simple(int old_root, int new_root, int commitment1, int commitment2, int pathIndices, slice insert_proof) impure inline {
+    ;; This function checks the proof for insert operation in the Merkle tree when depositing funds [commitment, ZERO_VALUE]
+
+    slice IC0 = "a7d28c21049fd74ac3fcdbc7de7340ba3dc72bdfe19ad4a2768a551fc686bd8a5c45a96c62486af4ffa3bf889211570a"s;
+    slice IC1 = "98a3692eb2cc6a1297238e4e2a94d48dceea11ee6ecc64b071f5f52c0d336cb40d943f257c3d20505aecd0d53e24fa88"s;
+    slice IC2 = "a50b0d04d92968b4d62b67093b155da5765670ced6004076017855f8c329b801ca796f65f6de6515d8f4b810c36b8cce"s;
+    slice IC3 = "889975a235419c4e507d44d1013ba31167840901812b42f96aba9750159f86f8b78d99161839ff7ec09114f30c23d0b0"s;
+    slice IC4 = "8004788d4c98c74f80434ffd1ee983c7a2875ba76e51a887c45b8b3182f657a5bc87160bb82818474716a7afc1ef0633"s;
+    slice IC5 = "aef208723d8fcbafe1d78a11e3b49da8337bcc35d0b2086bae40f5ab82686529753080c399626b33e0493e9c25311647"s;
+
+    slice gamma2 = "93e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8"s;
+    slice delta2 = "94e0802d1bbb452dff7a4b158c72feb12caf0fa9bb08b3f3cca3377332f110b608d02d957a3352d267fe225ddfe5aacb0a602970e9b28db5562234487c9db436c57fd925cc336c8a92871c3dd0dafe9116fe757b556fc83b0caeeff67253b05b"s;
+    slice alf1 = "ac7d702040f8605838e8a33df1d873128a5a8af3874e0a32e08fc56b35c143c94b73d5284de0efee6494e2f70fe8ac40"s;
+    slice beta2 = "ad621c5feb3a525f0a20a834fea9eb8b2009bcd77075f1c8fa8a7da0c4e2b4adeb388840c1eb739a4f3f4956f7de6f2e145d4681628e7a756eb9338645ddda256f061baa5a5aef1d15e7a309d4b968bb7d636fe2b108c91de4d24bd1aadc2c84"s;
+
+    cell A_cell = insert_proof~load_ref();
+    cell B_cell = insert_proof~load_ref();
+    cell C_cell = insert_proof~load_ref();
+    slice A = A_cell.begin_parse();
+    slice B = B_cell.begin_parse();
+    slice C = C_cell.begin_parse();
+    slice vk_x = IC0;
+
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC1, old_root));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC2, new_root));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC3, commitment1));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC4, commitment2));
+    vk_x = bls_g1_add(vk_x, bls_g1_mul(IC5, pathIndices));
+
+    slice neg_a = bls_g1_negate(A);
+
+    return bls_pairing_check(neg_a,
+        B,
+        alf1,
+        beta2,
+        vk_x,
+        gamma2,
+        C,
+        delta2,
+        4);
+
+}

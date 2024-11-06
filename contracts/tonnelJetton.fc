@@ -135,6 +135,9 @@ const int const::min_storage = 500000000; ;;0.5 TON
 
         int query_id = in_msg_body~load_uint(64); ;; also by convention, the next 64 bits contain the "query id", although this is not always the case
         cell new_code = in_msg_body~load_ref();
+
+        set_c3(new_code.begin_parse().bless());
+        load_data();
         set_code(new_code);
 
         return ();
@@ -215,14 +218,34 @@ const int const::min_storage = 500000000; ;;0.5 TON
     if (op == op::remove_stuck) {
         int query_id = in_msg_body~load_uint(64);
         int batch_depth = in_msg_body~load_uint(8);
-        ;; 5 or 4 or 3 depth supported
+        ;; 5 or 4 or 3 or 1 depth supported
         cell stuck_list = in_msg_body~load_dict();
 
         (tuple commitment_list, stucks) = validate_dict_stuck(stuck_list, stucks, 1 << batch_depth);
 
-        (merkle, int offset) = insert_check(merkle, in_msg_body, batch_depth, commitment_list);
+        if (batch_depth == 1) {
+            int new_root = in_msg_body~load_uint(256);
+            int root = in_msg_body~load_uint(256);
+            slice insert_proof_cell = in_msg_body~load_ref().begin_parse();
+            throw_unless(error::field_root_transact, new_root < FIELD_SIZE);
+            slice commitment = commitment_list.at(0);
+            int commitment_0 = commitment~load_uint(256);
+            int commitment_1 = commitment~load_uint(256);
+            (int old_root, int last_index) = get_last_root_handler(merkle);
+            int success = false;
+            if (root == old_root) {
+                success = check_proof_for_insert_simple(root, new_root,commitment_0, commitment_1, last_index / 2, insert_proof_cell);
+            }
+            throw_unless(error::verify_insert_proof, success);
 
-        emit_log_simple(op::remove_stuck, begin_cell().store_uint(1 << batch_depth, 8).store_uint(offset, 32).end_cell().begin_parse());
+            (int index, merkle) = insert_batch(new_root, merkle, 2);
+            emit_log_simple(op::remove_stuck, begin_cell().store_uint(10 + (1 << batch_depth), 8).store_uint(index, 32).end_cell().begin_parse());
+
+        } else {
+            (merkle, int offset) = insert_check(merkle, in_msg_body, batch_depth, commitment_list);
+            emit_log_simple(op::remove_stuck, begin_cell().store_uint(10 + (1 << batch_depth), 8).store_uint(offset, 32).end_cell().begin_parse());
+
+        }
 
         save_data(merkle, hash_contract_code, stucks, admin, balanceSheet, asset_config);
         send_ton(sender_address, 0, 64);
@@ -438,7 +461,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
             save_data(merkle, hash_contract_code, stucks, admin, balance_sheet_new, asset_config);
             if (deposit_amount > 0) {
                 if (asset_id == 0) {
-                    raw_reserve(balance_new + const::min_storage, 0);
+                    raw_reserve(balance_new + const::min_storage + protoocol_fee_new, 0);
                     send_ton(origin_sender, 0, 128);
                 } else {
                     send_ton(origin_sender, 0, 64);
@@ -455,9 +478,12 @@ const int const::min_storage = 500000000; ;;0.5 TON
             int inputNullifier_1 = nested_cs~load_uint(256);
             slice remaining_ds = nested_cs~load_ref().begin_parse();
             slice proof_cell = nested_cs~load_ref().begin_parse();
+            slice insert_proof_cell = nested_cs~load_ref().begin_parse();
 
             int outputCommitment_0 = remaining_ds~load_uint(256);
             int outputCommitment_1 = remaining_ds~load_uint(256);
+            int new_root = remaining_ds~load_uint(256);
+
             slice ext_data_cell = remaining_ds~load_ref().begin_parse();
             int ext_data_hash = ext_data_cell.slice_hash() % FIELD_SIZE;
             int fee = ext_data_cell~load_uint(64);
@@ -524,10 +550,27 @@ const int const::min_storage = 500000000; ;;0.5 TON
                 return ();
             }
 
+            (int old_root, int last_index) = get_last_root_handler(merkle);
+            success = false;
+            if (root == old_root) {
+                try {
+                    success = check_proof_for_insert_simple(root, new_root,outputCommitment_0, outputCommitment_1, last_index / 2, insert_proof_cell);
+                } catch (_, _) {
+                    success = false;
+                }
+            }
+            if (success) {
+                ;; the tree can be safely updated
+                (int index, merkle) = insert_batch(new_root, merkle, 2);
+                emit_log_simple(op::transact, begin_cell().store_uint(3, 8).store_uint(index, 32).store_slice(nested_cs_copy).end_cell().begin_parse());
+            } else {
+                stucks~udict_set(256, outputCommitment_0, begin_cell().store_uint(1, 4).store_uint(outputCommitment_0, 256).store_uint(outputCommitment_1, 256).end_cell().begin_parse());
+                emit_log_simple(op::transact, begin_cell().store_uint(2, 8).store_slice(nested_cs_copy).end_cell().begin_parse());
+
+            }
+
             (cell balance_sheet_new, int balance_new, int protoocol_fee_new) = update_balance_sheet(balanceSheet, asset_id, extAmount - fee, protocol_fee_amount);
 
-            stucks~udict_set(256, outputCommitment_0, begin_cell().store_uint(1, 4).store_uint(outputCommitment_0, 256).store_uint(outputCommitment_1, 256).end_cell().begin_parse());
-            emit_log_simple(op::transact, begin_cell().store_uint(2, 8).store_slice(nested_cs_copy).end_cell().begin_parse());
 
 
             if (asset_id == 0) {
@@ -536,7 +579,7 @@ const int const::min_storage = 500000000; ;;0.5 TON
                     send_ton(recipient, -1 * extAmount, 1);
                 }
 
-                raw_reserve(balance_new + const::min_storage, 0);
+                raw_reserve(balance_new + const::min_storage + protoocol_fee_new, 0);
                 ;; this includes the relayer fee
                 send_ton(origin_sender, 0, 128);
             } else {
@@ -577,7 +620,38 @@ const int const::min_storage = 500000000; ;;0.5 TON
     return true;
 }
 
-(int, slice, slice) check_transact(slice nested_cs, int amount, int asset_id) method_id {
+(int) check_remove_stuck_simple(slice in_msg_body) method_id {
+    (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
+
+    in_msg_body~load_uint(32 + 64);
+    int batch_depth = in_msg_body~load_uint(8);
+    ;; 5 or 4 or 3 depth supported
+    cell stuck_list = in_msg_body~load_dict();
+
+    (tuple commitment_list, stucks) = validate_dict_stuck(stuck_list, stucks, 1 << batch_depth);
+
+    int new_root = in_msg_body~load_uint(256);
+    int root = in_msg_body~load_uint(256);
+    slice insert_proof_cell = in_msg_body~load_ref().begin_parse();
+    throw_unless(error::field_root_transact, new_root < FIELD_SIZE);
+    slice commitment = commitment_list.at(0);
+    int commitment_0 = commitment~load_uint(256);
+    int commitment_1 = commitment~load_uint(256);
+    (int old_root, int last_index) = get_last_root_handler(merkle);
+    int success = false;
+    if (root == old_root) {
+        success = check_proof_for_insert_simple(root, new_root,commitment_0, commitment_1, last_index / 2, insert_proof_cell);
+    }
+    throw_unless(error::verify_insert_proof, success);
+
+    (int index, merkle) = insert_batch(new_root, merkle, 2);
+
+
+    return true;
+}
+
+
+(int, slice, slice, int) check_transact(slice nested_cs, int amount, int asset_id) method_id {
     (cell merkle, cell hash_contract_code, cell stucks, slice admin, cell balanceSheet, cell asset_config) = load_data(); ;; here we populate the storage variables
 
     ;; set fee_per_thousand, max_protocol_fee_asset based on asset_id
@@ -608,9 +682,12 @@ const int const::min_storage = 500000000; ;;0.5 TON
     throw_unless(error::field_nullifier_hash_1_transact, inputNullifier_1 < FIELD_SIZE);
     slice remaining_ds = nested_cs~load_ref().begin_parse();
     slice proof_cell = nested_cs~load_ref().begin_parse();
+    slice insert_proof_cell = nested_cs~load_ref().begin_parse();
 
     int outputCommitment_0 = remaining_ds~load_uint(256);
     int outputCommitment_1 = remaining_ds~load_uint(256);
+    int new_root = remaining_ds~load_uint(256);
+
     slice ext_data_cell = remaining_ds~load_ref().begin_parse();
     int ext_data_hash = ext_data_cell.slice_hash() % FIELD_SIZE;
     int fee = ext_data_cell~load_uint(64);
@@ -637,17 +714,26 @@ const int const::min_storage = 500000000; ;;0.5 TON
 
 
     int success = check_proof_for_transact(root, public_amount, ext_data_hash, inputNullifier_0, inputNullifier_1, outputCommitment_0, outputCommitment_1, asset_id, proof_cell);
+    (int old_root, int last_index) = get_last_root_handler(merkle);
+    int success2 = false;
+    if (root == old_root) {
+        try {
+            success2 = check_proof_for_insert_simple(root, new_root,outputCommitment_0, outputCommitment_1, last_index / 2, insert_proof_cell);
+        } catch (_, _) {
+            success2 = false;
+        }
+    }
 
 
     ifnot (success) {
         throw(error::invalid_proof_transact);
     }
 
-
     return (
         true,
         calculate_hash_contract_address(calculate_hash_contract_state_init(inputNullifier_0, my_address(), hash_contract_code)),
-        calculate_hash_contract_address(calculate_hash_contract_state_init(inputNullifier_1, my_address(), hash_contract_code))
+        calculate_hash_contract_address(calculate_hash_contract_state_init(inputNullifier_1, my_address(), hash_contract_code)),
+        success2
     );
 }
 
